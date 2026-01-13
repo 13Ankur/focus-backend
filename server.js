@@ -45,7 +45,14 @@ if (isProduction) {
 // CORS configuration
 const corsOptions = {
   origin: isProduction 
-    ? ['https://pawsfocus.app', 'capacitor://localhost', 'ionic://localhost']
+    ? [
+        'https://pawsfocus.app',
+        'https://staypaws.zavvi.co.in',
+        'capacitor://localhost',
+        'ionic://localhost',
+        'http://localhost:8100', // Local dev testing
+        'http://localhost:4200'  // Angular dev server
+      ]
     : true, // Allow all in development
   credentials: true,
   optionsSuccessStatus: 200
