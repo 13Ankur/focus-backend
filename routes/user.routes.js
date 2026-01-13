@@ -1,6 +1,8 @@
 import express from 'express';
 import Focus from '../models/Focus.js';
 import User from '../models/User.js';
+import Stats from '../models/Stats.js';
+import BreedCollection from '../models/BreedCollection.js';
 import protect from '../middleware/auth.middleware.js';
 
 const router = express.Router();
@@ -60,6 +62,8 @@ router.get('/export', protect, async (req, res) => {
     // Get all user data
     const user = await User.findById(userId).select('-password -emailVerificationToken -emailVerificationExpires -resetPasswordToken -resetPasswordExpires');
     const focusSessions = await Focus.find({ userId });
+    const stats = await Stats.findOne({ userId });
+    const breedCollection = await BreedCollection.findOne({ userId });
 
     const exportData = {
       exportDate: new Date().toISOString(),
@@ -82,18 +86,18 @@ router.get('/export', protect, async (req, res) => {
         createdAt: session.createdAt,
         completedAt: session.completedAt
       })),
-      statistics: {
-        completedSessions: user.completedSessions,
-        totalMinutes: user.totalFocusMinutes,
-        totalKibble: user.totalKibble,
-        longestStreak: user.longestStreak,
-        currentStreak: user.currentStreak
-      },
-      breedCollection: {
-        unlockedBreeds: user.unlockedBreeds,
-        activeBreed: user.activeBreed,
-        totalKibble: user.totalKibble
-      }
+      statistics: stats ? {
+        completedSessions: stats.completedSessions,
+        totalMinutes: stats.totalMinutes,
+        totalKibble: stats.totalKibble,
+        longestStreak: stats.longestStreak,
+        currentStreak: stats.currentStreak
+      } : null,
+      breedCollection: breedCollection ? {
+        unlockedBreeds: breedCollection.unlockedBreeds,
+        activeBreed: breedCollection.activeBreed,
+        totalKibble: breedCollection.totalKibble
+      } : null
     };
 
     res.json(exportData);
@@ -112,6 +116,8 @@ router.delete('/account', protect, async (req, res) => {
 
     // Delete all user data in order
     await Focus.deleteMany({ userId });
+    await Stats.deleteOne({ userId });
+    await BreedCollection.deleteOne({ userId });
     await User.findByIdAndDelete(userId);
 
     res.json({ 
