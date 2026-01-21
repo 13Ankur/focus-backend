@@ -20,10 +20,32 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 // Validate required environment variables in production
 if (isProduction) {
-  const requiredEnvVars = ['MONGODB_URI', 'JWT_SECRET', 'SENDGRID_API_KEY'];
+  // NOTE: Social login relies on these being present in production.
+  // If they are missing, logins will fail at runtime with confusing "Invalid token" errors.
+  const requiredEnvVars = [
+    'MONGODB_URI',
+    'JWT_SECRET',
+    'SENDGRID_API_KEY',
+    // Apple Sign-In (required if Apple login is enabled in the app)
+    'APPLE_CLIENT_ID',
+  ];
   const missingVars = requiredEnvVars.filter(v => !process.env[v]);
   if (missingVars.length > 0) {
     console.error('❌ Missing required environment variables:', missingVars.join(', '));
+    process.exit(1);
+  }
+
+  // Google Sign-In: require at least one configured audience.
+  // (Web client ID recommended, but iOS/Android IDs are acceptable if that is what your app emits in `aud`.)
+  const googleAudiences = [
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_IOS_CLIENT_ID,
+    process.env.GOOGLE_ANDROID_CLIENT_ID,
+  ].filter(Boolean);
+  if (googleAudiences.length === 0) {
+    console.error(
+      '❌ Missing Google Sign-In config. Set at least one of: GOOGLE_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, GOOGLE_ANDROID_CLIENT_ID'
+    );
     process.exit(1);
   }
   console.log('✅ All required environment variables present');
