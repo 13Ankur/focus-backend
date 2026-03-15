@@ -11,11 +11,11 @@ const breedCollectionSchema = new mongoose.Schema(
     },
     unlockedBreeds: {
       type: [String],
-      default: ['shiba'], // Default starting breed
+      default: ['golden_retriever'],
     },
     activeBreed: {
       type: String,
-      default: 'shiba',
+      default: 'golden_retriever',
     },
     totalKibble: {
       type: Number,

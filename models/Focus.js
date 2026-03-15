@@ -21,11 +21,22 @@ const focusSchema = new mongoose.Schema(
       enum: ['completed', 'failed'],
       required: [true, 'Status is required'],
     },
+    tag: {
+      type: String,
+      enum: ['study', 'work', 'reading', 'exercise', 'meditation', 'creative', 'other', null],
+      default: null,
+    },
+    kibbleEarned: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+focusSchema.index({ userId: 1, createdAt: -1 });
 
 const Focus = mongoose.model('Focus', focusSchema);
 

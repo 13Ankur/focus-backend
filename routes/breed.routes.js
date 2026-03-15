@@ -4,7 +4,18 @@ import protect from '../middleware/auth.middleware.js';
 
 const router = express.Router();
 
-// All breed definitions with metadata
+const SESSION_UNLOCK_THRESHOLDS = {
+  golden_retriever: 0,
+  husky: 5,
+  shiba_inu: 15,
+  cavapoo: 30,
+  french_bulldog: 50,
+  labrador: 75,
+  dachshund: 100,
+  australian_shepherd: 150,
+  maltese: 200,
+};
+
 const ALL_BREEDS = [
   {
     id: 'golden_retriever',
@@ -14,6 +25,7 @@ const ALL_BREEDS = [
     eatingImage: 'assets/images/golden_retriever_eating.png',
     sleepingImage: 'assets/images/golden_retriever_sleeping.png',
     unlockRequirement: 0,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.golden_retriever,
     order: 1
   },
   {
@@ -23,7 +35,8 @@ const ALL_BREEDS = [
     image: 'assets/images/husky.png',
     eatingImage: 'assets/images/husky_eating.png',
     sleepingImage: 'assets/images/husky_sleeping.png',
-    unlockRequirement: 100,
+    unlockRequirement: 500,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.husky,
     order: 2
   },
   {
@@ -33,7 +46,8 @@ const ALL_BREEDS = [
     image: 'assets/images/shiba_inu.png',
     eatingImage: 'assets/images/shiba_inu_eating.png',
     sleepingImage: 'assets/images/shiba_inu_sleeping.png',
-    unlockRequirement: 250,
+    unlockRequirement: 1000,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.shiba_inu,
     order: 3
   },
   {
@@ -43,7 +57,8 @@ const ALL_BREEDS = [
     image: 'assets/images/cavapoo.png',
     eatingImage: 'assets/images/cavapoo_eating.png',
     sleepingImage: 'assets/images/cavapoo_sleeping.png',
-    unlockRequirement: 500,
+    unlockRequirement: 2000,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.cavapoo,
     order: 4
   },
   {
@@ -53,7 +68,8 @@ const ALL_BREEDS = [
     image: 'assets/images/french_bulldog.png',
     eatingImage: 'assets/images/french_bulldog_eating.png',
     sleepingImage: 'assets/images/french_bulldog_sleeping.png',
-    unlockRequirement: 750,
+    unlockRequirement: 3000,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.french_bulldog,
     order: 5
   },
   {
@@ -63,7 +79,8 @@ const ALL_BREEDS = [
     image: 'assets/images/labrador.png',
     eatingImage: 'assets/images/labrador_eating.png',
     sleepingImage: 'assets/images/labrador_sleeping.png',
-    unlockRequirement: 1000,
+    unlockRequirement: 4000,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.labrador,
     order: 6
   },
   {
@@ -73,7 +90,8 @@ const ALL_BREEDS = [
     image: 'assets/images/dachshund.png',
     eatingImage: 'assets/images/dachshund_eating.png',
     sleepingImage: 'assets/images/dachshund_sleeping.png',
-    unlockRequirement: 1500,
+    unlockRequirement: 6000,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.dachshund,
     order: 7
   },
   {
@@ -83,7 +101,8 @@ const ALL_BREEDS = [
     image: 'assets/images/australian_shepherd.png',
     eatingImage: 'assets/images/australian_shepherd_eating.png',
     sleepingImage: 'assets/images/australian_shepherd_sleeping.png',
-    unlockRequirement: 2000,
+    unlockRequirement: 8000,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.australian_shepherd,
     order: 8
   },
   {
@@ -93,10 +112,31 @@ const ALL_BREEDS = [
     image: 'assets/images/maltese.png',
     eatingImage: 'assets/images/maltese_eating.png',
     sleepingImage: 'assets/images/maltese_sleeping.png',
-    unlockRequirement: 3000,
+    unlockRequirement: 10000,
+    sessionsRequired: SESSION_UNLOCK_THRESHOLDS.maltese,
     order: 9
   }
 ];
+
+export function checkAndUnlockBreeds(user) {
+  const sessions = user.completedSessions || 0;
+  const newlyUnlocked = [];
+
+  for (const breed of ALL_BREEDS) {
+    if (
+      breed.sessionsRequired > 0 &&
+      sessions >= breed.sessionsRequired &&
+      !user.unlockedBreeds.includes(breed.id)
+    ) {
+      user.unlockedBreeds.push(breed.id);
+      newlyUnlocked.push(breed);
+    }
+  }
+
+  return newlyUnlocked;
+}
+
+export { ALL_BREEDS, SESSION_UNLOCK_THRESHOLDS };
 
 // @route   GET /breeds
 // @desc    Get all breeds with unlock status for user
@@ -104,20 +144,29 @@ const ALL_BREEDS = [
 router.get('/', protect, async (req, res) => {
   try {
     const user = req.user;
-    
+    const sessions = user.completedSessions || 0;
+
+    const newlyUnlocked = checkAndUnlockBreeds(user);
+    if (newlyUnlocked.length > 0) {
+      await user.save();
+    }
+
     const breeds = ALL_BREEDS.map(breed => ({
       ...breed,
       unlocked: user.unlockedBreeds.includes(breed.id),
       isActive: user.activeBreed === breed.id,
-      progress: Math.min(100, (user.totalKibble / breed.unlockRequirement) * 100),
-      kibbleToUnlock: Math.max(0, breed.unlockRequirement - user.totalKibble)
+      progress: breed.sessionsRequired === 0
+        ? 100
+        : Math.min(100, (sessions / breed.sessionsRequired) * 100),
+      sessionsToUnlock: Math.max(0, breed.sessionsRequired - sessions),
     }));
-    
+
     res.json({
       breeds,
       activeBreed: user.activeBreed,
       unlockedBreeds: user.unlockedBreeds,
-      totalKibble: user.totalKibble
+      totalKibble: user.totalKibble,
+      completedSessions: sessions,
     });
   } catch (error) {
     console.error('Breeds fetch error:', error);
@@ -131,17 +180,25 @@ router.get('/', protect, async (req, res) => {
 router.get('/collection', protect, async (req, res) => {
   try {
     const user = req.user;
-    
+    const sessions = user.completedSessions || 0;
+
+    const newlyUnlocked = checkAndUnlockBreeds(user);
+    if (newlyUnlocked.length > 0) {
+      await user.save();
+    }
+
+    const nextToUnlock = ALL_BREEDS
+      .filter(b => !user.unlockedBreeds.includes(b.id))
+      .sort((a, b) => a.sessionsRequired - b.sessionsRequired)[0] || null;
+
     res.json({
       unlockedBreeds: user.unlockedBreeds,
       activeBreed: user.activeBreed,
       totalKibble: user.totalKibble,
+      completedSessions: sessions,
       unlockedCount: user.unlockedBreeds.length,
       totalBreeds: ALL_BREEDS.length,
-      nextToUnlock: ALL_BREEDS.find(b => 
-        !user.unlockedBreeds.includes(b.id) && 
-        b.unlockRequirement > user.totalKibble
-      ) || null
+      nextToUnlock,
     });
   } catch (error) {
     console.error('Collection fetch error:', error);
@@ -155,33 +212,33 @@ router.get('/collection', protect, async (req, res) => {
 router.post('/active', protect, async (req, res) => {
   try {
     const { breedId } = req.body;
-    
+
     if (!breedId) {
       return res.status(400).json({ message: 'Breed ID is required' });
     }
-    
+
     // Check if breed exists
     const breed = ALL_BREEDS.find(b => b.id === breedId);
     if (!breed) {
       return res.status(404).json({ message: 'Breed not found' });
     }
-    
+
     const user = req.user;
-    
-    // Check if breed is unlocked
+
     if (!user.unlockedBreeds.includes(breedId)) {
-      return res.status(403).json({ 
+      const threshold = SESSION_UNLOCK_THRESHOLDS[breedId] || 0;
+      return res.status(403).json({
         message: 'Breed is locked',
-        kibbleNeeded: breed.unlockRequirement - user.totalKibble,
-        requirement: breed.unlockRequirement
+        sessionsNeeded: Math.max(0, threshold - (user.completedSessions || 0)),
+        sessionsRequired: threshold,
       });
     }
-    
+
     // Set active breed
     user.activeBreed = breedId;
     user.selectedBreed = breedId; // Legacy field
     await user.save();
-    
+
     res.json({
       success: true,
       activeBreed: breedId,
@@ -204,12 +261,12 @@ router.get('/active', protect, async (req, res) => {
   try {
     const user = req.user;
     const breed = ALL_BREEDS.find(b => b.id === user.activeBreed);
-    
+
     if (!breed) {
       // Fallback to golden retriever
       return res.json(ALL_BREEDS[0]);
     }
-    
+
     res.json({
       ...breed,
       unlocked: true,
@@ -222,25 +279,71 @@ router.get('/active', protect, async (req, res) => {
 });
 
 // @route   POST /breeds/check-unlocks
-// @desc    Check and apply any new breed unlocks based on kibble
+// @desc    Auto-unlock breeds based on completed sessions
 // @access  Private
 router.post('/check-unlocks', protect, async (req, res) => {
   try {
     const user = req.user;
-    const newlyUnlocked = user.checkBreedUnlocks();
-    
+    const newlyUnlocked = checkAndUnlockBreeds(user);
+
     if (newlyUnlocked.length > 0) {
       await user.save();
     }
-    
+
     res.json({
-      newlyUnlocked,
+      newlyUnlocked: newlyUnlocked.map(b => ({ id: b.id, name: b.name, description: b.description })),
       unlockedBreeds: user.unlockedBreeds,
-      totalKibble: user.totalKibble
+      completedSessions: user.completedSessions || 0,
+      totalKibble: user.totalKibble,
     });
   } catch (error) {
     console.error('Check unlocks error:', error);
     res.status(500).json({ message: 'Server error checking unlocks' });
+  }
+});
+
+// @route   POST /breeds/unlock
+// @desc    Unlock a breed if session threshold is met (no kibble cost)
+// @access  Private
+router.post('/unlock', protect, async (req, res) => {
+  try {
+    const { breedId } = req.body;
+    if (!breedId) return res.status(400).json({ message: 'Breed ID is required' });
+
+    const breed = ALL_BREEDS.find(b => b.id === breedId);
+    if (!breed) return res.status(404).json({ message: 'Breed not found' });
+
+    const user = req.user;
+
+    if (user.unlockedBreeds.includes(breedId)) {
+      return res.status(409).json({ message: 'Breed already unlocked' });
+    }
+
+    const threshold = SESSION_UNLOCK_THRESHOLDS[breedId] || 0;
+    const sessions = user.completedSessions || 0;
+    if (sessions < threshold) {
+      return res.status(403).json({
+        message: 'Not enough sessions',
+        sessionsNeeded: threshold - sessions,
+        sessionsRequired: threshold,
+      });
+    }
+
+    user.unlockedBreeds.push(breedId);
+    user.activeBreed = breedId;
+    user.selectedBreed = breedId;
+    await user.save();
+
+    res.json({
+      success: true,
+      breedId,
+      kibbleBalance: user.totalKibble,
+      unlockedBreeds: user.unlockedBreeds,
+      activeBreed: user.activeBreed,
+    });
+  } catch (error) {
+    console.error('Unlock breed error:', error);
+    res.status(500).json({ message: 'Server error unlocking breed' });
   }
 });
 

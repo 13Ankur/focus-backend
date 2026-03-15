@@ -1,4 +1,3 @@
-// Load environment variables FIRST before any other imports
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -6,6 +5,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import mongoSanitize from 'express-mongo-sanitize';
+import xss from 'xss-clean';
 import connectDB, { isDBConnected } from './config/db.js';
 import authRoutes from './routes/auth.routes.js';
 import focusRoutes from './routes/focus.routes.js';
@@ -14,20 +15,26 @@ import statsRoutes from './routes/stats.routes.js';
 import breedRoutes from './routes/breed.routes.js';
 import buddyRoutes from './routes/buddy.routes.js';
 import versionRoutes from './routes/version.routes.js';
+import subscriptionRoutes from './routes/subscription.js';
+import achievementRoutes from './routes/achievement.routes.js';
+import socialRoutes from './routes/social.js';
+import { startSubscriptionCron } from './services/subscriptionCron.js';
+import path from 'path';
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Validate required environment variables in production
+// ════════════════════════════════════════════════════════════════════
+//  Environment validation (production)
+// ════════════════════════════════════════════════════════════════════
+
 if (isProduction) {
-  // NOTE: Social login relies on these being present in production.
-  // If they are missing, logins will fail at runtime with confusing "Invalid token" errors.
   const requiredEnvVars = [
     'MONGODB_URI',
     'JWT_SECRET',
     'SENDGRID_API_KEY',
-    // Apple Sign-In (required if Apple login is enabled in the app)
     'APPLE_CLIENT_ID',
+    'REVENUECAT_WEBHOOK_SECRET',
   ];
   const missingVars = requiredEnvVars.filter(v => !process.env[v]);
   if (missingVars.length > 0) {
@@ -35,8 +42,6 @@ if (isProduction) {
     process.exit(1);
   }
 
-  // Google Sign-In: require at least one configured audience.
-  // (Web client ID recommended, but iOS/Android IDs are acceptable if that is what your app emits in `aud`.)
   const googleAudiences = [
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_IOS_CLIENT_ID,
@@ -51,96 +56,193 @@ if (isProduction) {
   console.log('✅ All required environment variables present');
 }
 
-// Security middleware (production only)
-if (isProduction) {
-  app.use(helmet());
-  
-  // Rate limiting
-  const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // limit each IP to 100 requests per windowMs
-    message: { message: 'Too many requests, please try again later.' }
-  });
-  app.use(limiter);
-}
+// ════════════════════════════════════════════════════════════════════
+//  Security middleware
+// ════════════════════════════════════════════════════════════════════
 
-// CORS configuration
+// Helmet with CSP
+app.use(
+  helmet({
+    contentSecurityPolicy: isProduction
+      ? {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            imgSrc: ["'self'", 'data:', 'https:'],
+            connectSrc: [
+              "'self'",
+              'https://staypawsapi.zavvi.co.in',
+              'https://api.revenuecat.com',
+            ],
+            fontSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            upgradeInsecureRequests: [],
+          },
+        }
+      : false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+// MongoDB query injection prevention
+app.use(mongoSanitize());
+
+// XSS prevention — sanitize user input in body, query, params
+app.use(xss());
+
+// ── Rate limiters ──
+
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isProduction ? 100 : 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many requests, please try again later.' },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isProduction ? 10 : 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many auth attempts, please try again later.' },
+});
+
+const focusLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isProduction ? 20 : 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many focus requests, please try again later.' },
+});
+
+// Webhook limiter is more generous — RevenueCat may send bursts
+const webhookLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(generalLimiter);
+
+// ════════════════════════════════════════════════════════════════════
+//  CORS
+// ════════════════════════════════════════════════════════════════════
+
+const ALLOWED_ORIGINS = [
+  'https://staypaws.zavvi.co.in',
+  'https://pawsfocus.app',
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost',
+];
+
 const corsOptions = {
-  origin: isProduction 
-    ? [
-        'https://pawsfocus.app',
-        'https://staypaws.zavvi.co.in',
-        'capacitor://localhost',
-        'ionic://localhost',
-        'http://localhost:8100', // Local dev testing
-        'http://localhost:4200'  // Angular dev server
-      ]
-    : true, // Allow all in development
+  origin: isProduction
+    ? (origin, callback) => {
+        if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      }
+    : true,
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
 };
 app.use(cors(corsOptions));
 
-// Body parser
-app.use(express.json({ limit: '10kb' })); // Limit body size
+// ════════════════════════════════════════════════════════════════════
+//  Body parser — 1 MB limit
+// ════════════════════════════════════════════════════════════════════
 
-// Database connection check middleware
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+
+// ════════════════════════════════════════════════════════════════════
+//  Database connection check
+// ════════════════════════════════════════════════════════════════════
+
 app.use((req, res, next) => {
-  // Allow health check without DB
-  if (req.path === '/health') {
+  if (req.path === '/health' || req.path === '/subscription/webhook') {
     return next();
   }
-  
-  // Check if database is connected
   if (!isDBConnected()) {
-    return res.status(503).json({ 
+    return res.status(503).json({
       message: 'Database connection unavailable. Please try again later.',
-      dbStatus: 'disconnected'
+      dbStatus: 'disconnected',
     });
   }
-  
   next();
 });
 
-// Routes
-app.use('/auth', authRoutes);
-app.use('/focus', focusRoutes);
+// ════════════════════════════════════════════════════════════════════
+//  Routes (with per-route rate limiters)
+// ════════════════════════════════════════════════════════════════════
+
+app.use('/auth', authLimiter, authRoutes);
+app.use('/focus', focusLimiter, focusRoutes);
 app.use('/user', userRoutes);
 app.use('/stats', statsRoutes);
 app.use('/breeds', breedRoutes);
 app.use('/buddy', buddyRoutes);
 app.use('/version', versionRoutes);
+app.use('/subscription/webhook', webhookLimiter);
+app.use('/subscription', subscriptionRoutes);
+app.use('/achievements', achievementRoutes);
+app.use('/social', socialRoutes);
 
-// Health check route
+// ════════════════════════════════════════════════════════════════════
+//  AdMob app-ads.txt
+// ════════════════════════════════════════════════════════════════════
+
+app.get('/app-ads.txt', (req, res) => {
+  res.sendFile(path.resolve('app-ads.txt'));
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  Health check
+// ════════════════════════════════════════════════════════════════════
+
 app.get('/health', (req, res) => {
-  res.json({ 
+  res.json({
     status: isDBConnected() ? 'ok' : 'degraded',
     database: isDBConnected() ? 'connected' : 'disconnected',
     environment: isProduction ? 'production' : 'development',
-    timestamp: new Date().toISOString() 
+    timestamp: new Date().toISOString(),
   });
 });
 
-// 404 handler
+// ════════════════════════════════════════════════════════════════════
+//  Error handlers
+// ════════════════════════════════════════════════════════════════════
+
 app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
-// Error handler
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
+  // CORS rejection
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ message: 'Origin not allowed' });
+  }
   console.error('❌ Server error:', err.stack || err.message || err);
-  
-  // Don't leak error details in production
   const message = isProduction ? 'Internal server error' : (err.message || 'Internal server error');
   res.status(500).json({ message });
 });
 
+// ════════════════════════════════════════════════════════════════════
+//  Start
+// ════════════════════════════════════════════════════════════════════
+
 const PORT = process.env.PORT || 5000;
 
-// Start server and then connect to DB
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📍 Environment: ${isProduction ? 'PRODUCTION' : 'development'}`);
   console.log('🔌 Connecting to MongoDB...');
   await connectDB();
+  startSubscriptionCron();
 });
