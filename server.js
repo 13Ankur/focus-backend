@@ -34,12 +34,15 @@ if (isProduction) {
     'JWT_SECRET',
     'SENDGRID_API_KEY',
     'APPLE_CLIENT_ID',
-    'REVENUECAT_WEBHOOK_SECRET',
   ];
   const missingVars = requiredEnvVars.filter(v => !process.env[v]);
   if (missingVars.length > 0) {
     console.error('❌ Missing required environment variables:', missingVars.join(', '));
     process.exit(1);
+  }
+
+  if (!process.env.REVENUECAT_WEBHOOK_SECRET) {
+    console.warn('⚠️  Warning: REVENUECAT_WEBHOOK_SECRET is not set. Webhook verification will be disabled.');
   }
 
   const googleAudiences = [
@@ -65,21 +68,21 @@ app.use(
   helmet({
     contentSecurityPolicy: isProduction
       ? {
-          directives: {
-            defaultSrc: ["'self'"],
-            scriptSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'"],
-            imgSrc: ["'self'", 'data:', 'https:'],
-            connectSrc: [
-              "'self'",
-              'https://staypawsapi.zavvi.co.in',
-              'https://api.revenuecat.com',
-            ],
-            fontSrc: ["'self'"],
-            objectSrc: ["'none'"],
-            upgradeInsecureRequests: [],
-          },
-        }
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          connectSrc: [
+            "'self'",
+            'https://staypawsapi.zavvi.co.in',
+            'https://api.revenuecat.com',
+          ],
+          fontSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          upgradeInsecureRequests: [],
+        },
+      }
       : false,
     crossOriginEmbedderPolicy: false,
   })
@@ -142,12 +145,12 @@ const ALLOWED_ORIGINS = [
 const corsOptions = {
   origin: isProduction
     ? (origin, callback) => {
-        if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
-          callback(null, true);
-        } else {
-          callback(new Error('Not allowed by CORS'));
-        }
+      if (!origin || ALLOWED_ORIGINS.some(o => origin.startsWith(o))) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
       }
+    }
     : true,
   credentials: true,
   optionsSuccessStatus: 200,
