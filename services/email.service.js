@@ -1,26 +1,27 @@
-import sgMail from '@sendgrid/mail';
+import { Resend } from 'resend';
 
 class EmailService {
   constructor() {
-    this.isConfigured = null; // null = not checked yet
+    this.resend = null;
+    this.isConfigured = false;
     this.initialized = false;
   }
-  
+
   // Lazy initialization - called on first email send
   ensureInitialized() {
     if (this.initialized) return;
-    
-    const apiKey = process.env.SENDGRID_API_KEY;
-    
+
+    const apiKey = process.env.RESEND_API_KEY;
+
     if (!apiKey) {
-      console.warn('⚠️  SENDGRID_API_KEY not configured. Email sending will fail.');
+      console.warn('⚠️  RESEND_API_KEY not configured. Email sending will fail.');
       this.isConfigured = false;
     } else {
-      sgMail.setApiKey(apiKey);
+      this.resend = new Resend(apiKey);
       this.isConfigured = true;
-      console.log('✅ SendGrid email service initialized');
+      console.log('✅ Resend email service initialized');
     }
-    
+
     this.initialized = true;
   }
 
@@ -32,41 +33,40 @@ class EmailService {
   async sendEmail(to, subject, html, text) {
     // Lazy initialize on first use
     this.ensureInitialized();
-    
-    const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'noreply@pawsfocus.app';
+
+    const fromEmail = process.env.EMAIL_FROM || 'noreply@pawsfocus.app';
+    const fromName = process.env.EMAIL_FROM_NAME || 'Paws Focus';
 
     // If not configured, return error
-    if (!this.isConfigured) {
-      console.error('❌ Email not sent: SendGrid not configured');
+    if (!this.isConfigured || !this.resend) {
+      console.error('❌ Email not sent: Resend not configured');
       return { success: false, error: 'Email service not configured' };
     }
 
     try {
-      const msg = {
-        to,
-        from: {
-          email: fromEmail,
-          name: 'Paws Focus'
-        },
+      const { data, error } = await this.resend.emails.send({
+        from: `${fromName} <${fromEmail}>`,
+        to: [to],
         subject,
         text,
         html,
-      };
+      });
 
-      const response = await sgMail.send(msg);
+      if (error) {
+        throw error;
+      }
+
       console.log('✅ Email sent successfully to:', to);
-      return { success: true, messageId: response[0]?.headers?.['x-message-id'] || Date.now() };
+      return { success: true, messageId: data?.id || Date.now() };
     } catch (error) {
-      const errorMsg = error.response?.body?.errors?.[0]?.message || error.message;
-      console.error('❌ SendGrid error:', error.response?.body?.errors || error.message);
-      
-      // If API key is invalid/expired, mark as not configured
-      if (errorMsg?.includes('authorization') || errorMsg?.includes('expired') || errorMsg?.includes('revoked') || error.code === 401 || error.code === 403) {
-        console.error('❌ SendGrid API key is invalid or expired. Please update SENDGRID_API_KEY.');
+      console.error('❌ Resend error:', error.message || error);
+
+      // If error is related to API key or permissions, set configured to false
+      if (error.name === 'authentication_error' || error.message?.includes('unauthorized')) {
         this.isConfigured = false;
       }
-      
-      return { success: false, error: errorMsg || error.message };
+
+      return { success: false, error: error.message || 'Failed to send email' };
     }
   }
 
