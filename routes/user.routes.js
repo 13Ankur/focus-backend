@@ -42,6 +42,9 @@ router.get('/profile', protect, async (req, res) => {
         email: req.user.email,
         totalKibble: req.user.totalKibble,
         totalFocusMinutes: req.user.totalFocusMinutes,
+        buddyHappiness: req.user.buddyHappiness,
+        buddyFullness: req.user.buddyFullness,
+        lastBuddyInteraction: req.user.lastBuddyInteraction,
       },
       stats: {
         totalSessions,
@@ -137,7 +140,7 @@ router.delete('/account', protect, async (req, res) => {
     );
     await User.findByIdAndDelete(userId);
 
-    res.json({ 
+    res.json({
       message: 'Account deleted successfully',
       deletedAt: new Date().toISOString()
     });
@@ -149,10 +152,10 @@ router.delete('/account', protect, async (req, res) => {
 
 // Valid kibble pack definitions (must match frontend)
 const KIBBLE_PACKS = {
-  kibble_snack:  { base: 100,  bonus: 0,    label: 'Snack Pack' },
-  kibble_meal:   { base: 500,  bonus: 50,   label: 'Meal Pack' },
-  kibble_feast:  { base: 1500, bonus: 300,  label: 'Feast Pack' },
-  kibble_king:   { base: 5000, bonus: 1500, label: 'Kibble King' },
+  kibble_snack: { base: 100, bonus: 0, label: 'Snack Pack' },
+  kibble_meal: { base: 500, bonus: 50, label: 'Meal Pack' },
+  kibble_feast: { base: 1500, bonus: 300, label: 'Feast Pack' },
+  kibble_king: { base: 5000, bonus: 1500, label: 'Kibble King' },
 };
 
 // @route   POST /user/add-kibble
@@ -275,6 +278,64 @@ router.post('/use-streak-shield', protect, async (req, res) => {
   } catch (error) {
     console.error('POST /user/use-streak-shield error:', error.message);
     res.status(500).json({ message: 'Server error using streak shield' });
+  }
+});
+
+// @route   PATCH /user/settings
+// @desc    Update user preferences
+// @access  Private
+router.patch('/settings', protect, async (req, res) => {
+  try {
+    const { settings, notificationPrefs } = req.body;
+    const user = await User.findById(req.user._id);
+
+    if (settings) {
+      if (settings.soundEnabled !== undefined) user.settings.soundEnabled = settings.soundEnabled;
+      if (settings.notificationsEnabled !== undefined) user.settings.notificationsEnabled = settings.notificationsEnabled;
+      if (settings.vibrationEnabled !== undefined) user.settings.vibrationEnabled = settings.vibrationEnabled;
+      if (settings.theme !== undefined) user.settings.theme = settings.theme;
+      if (settings.defaultTimerDuration !== undefined) user.settings.defaultTimerDuration = settings.defaultTimerDuration;
+    }
+
+    if (notificationPrefs) {
+      if (notificationPrefs.streakReminders !== undefined) user.notificationPrefs.streakReminders = notificationPrefs.streakReminders;
+      if (notificationPrefs.dailyReminder !== undefined) user.notificationPrefs.dailyReminder = notificationPrefs.dailyReminder;
+      if (notificationPrefs.reminderTime !== undefined) user.notificationPrefs.reminderTime = notificationPrefs.reminderTime;
+      if (notificationPrefs.buddyHungerAlerts !== undefined) user.notificationPrefs.buddyHungerAlerts = notificationPrefs.buddyHungerAlerts;
+      if (notificationPrefs.weeklySummary !== undefined) user.notificationPrefs.weeklySummary = notificationPrefs.weeklySummary;
+    }
+
+    await user.save();
+
+    res.json({
+      success: true,
+      settings: user.settings,
+      notificationPrefs: user.notificationPrefs
+    });
+  } catch (error) {
+    console.error('Update settings error:', error);
+    res.status(500).json({ message: 'Server error updating settings' });
+  }
+});
+
+// @route   PATCH /user/onboarding
+// @desc    Update onboarding status
+// @access  Private
+router.patch('/onboarding', protect, async (req, res) => {
+  try {
+    const { completed } = req.body;
+    const user = await User.findById(req.user._id);
+
+    user.onboardingCompleted = !!completed;
+    await user.save();
+
+    res.json({
+      success: true,
+      onboardingCompleted: user.onboardingCompleted
+    });
+  } catch (error) {
+    console.error('Update onboarding error:', error);
+    res.status(500).json({ message: 'Server error updating onboarding status' });
   }
 });
 

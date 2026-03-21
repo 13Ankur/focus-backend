@@ -140,6 +140,8 @@ const ALLOWED_ORIGINS = [
   'capacitor://localhost',
   'ionic://localhost',
   'http://localhost',
+  'http://192.168.29.31',
+  'http://192.168.29.31:8100', // Ionic default port
 ];
 
 const corsOptions = {

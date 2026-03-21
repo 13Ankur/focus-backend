@@ -1,30 +1,111 @@
 import express from 'express';
 import Accessory from '../models/Accessory.js';
+import AccessoryItem from '../models/AccessoryItem.js';
 import User from '../models/User.js';
 import protect from '../middleware/auth.middleware.js';
 import { getEffectiveTier, TIER_LEVELS } from '../services/subscriptionService.js';
 
 const router = express.Router();
 
-const ACCESSORY_CATALOG = [
-  { id: 'party_hat', name: 'Party Hat', slot: 'hat', cost: 50, tier: 'free', icon: '🎉' },
-  { id: 'sunglasses', name: 'Sunglasses', slot: 'hat', cost: 75, tier: 'free', icon: '🕶️' },
-  { id: 'graduation_cap', name: 'Graduation Cap', slot: 'hat', cost: 100, tier: 'pro', icon: '🎓' },
-  { id: 'crown', name: 'Crown', slot: 'hat', cost: 200, tier: 'pro', icon: '👑' },
-  { id: 'santa_hat', name: 'Santa Hat', slot: 'hat', cost: 150, tier: 'free', seasonal: true, icon: '🎅' },
-  { id: 'basic_collar', name: 'Basic Collar', slot: 'collar', cost: 30, tier: 'free', icon: '📿' },
-  { id: 'fancy_collar', name: 'Fancy Collar', slot: 'collar', cost: 100, tier: 'pro', icon: '💎' },
-  { id: 'gold_collar', name: 'Gold Collar', slot: 'collar', cost: 0, tier: 'guardian', icon: '🥇' },
-  { id: 'park', name: 'Park', slot: 'background', cost: 50, tier: 'free', icon: '🌳' },
-  { id: 'beach', name: 'Beach', slot: 'background', cost: 100, tier: 'pro', icon: '🏖️' },
-  { id: 'library', name: 'Library', slot: 'background', cost: 75, tier: 'pro', icon: '📚' },
-  { id: 'golden_aura', name: 'Golden Aura', slot: 'special', cost: 0, tier: 'guardian', icon: '✨' },
-  { id: 'sparkle_effect', name: 'Sparkle Effect', slot: 'special', cost: 300, tier: 'pro', icon: '💫' },
-];
-
 function canAccessTier(userTier, requiredTier) {
   return TIER_LEVELS[userTier] >= TIER_LEVELS[requiredTier];
 }
+
+// @route   GET /buddy
+// @desc    Get buddy status (happiness/fullness)
+// @access  Private
+router.get('/', protect, async (req, res) => {
+  try {
+    const user = req.user;
+    user.decayBuddyStats();
+    await user.save();
+
+    res.json({
+      happiness: user.buddyHappiness,
+      fullness: user.buddyFullness,
+      lastBuddyInteraction: user.lastBuddyInteraction,
+    });
+  } catch (error) {
+    console.error('GET /buddy error:', error.message);
+    res.status(500).json({ message: 'Server error fetching buddy status' });
+  }
+});
+
+// @route   POST /buddy/interact
+// @desc    Interact with buddy (pet/play)
+// @access  Private
+router.post('/interact', protect, async (req, res) => {
+  try {
+    const { action } = req.body;
+    if (!action) return res.status(400).json({ message: 'Action is required' });
+
+    const user = req.user;
+    user.decayBuddyStats(); // Decay first to get fresh baseline
+
+    if (action === 'pet') {
+      user.buddyHappiness = Math.min(100, user.buddyHappiness + 5);
+    } else if (action === 'play') {
+      if (user.buddyFullness < 20) {
+        return res.status(400).json({ message: 'Too hungry to play! Give a treat first.' });
+      }
+      user.buddyHappiness = Math.min(100, user.buddyHappiness + 10);
+      user.buddyFullness = Math.max(0, user.buddyFullness - 5);
+    } else {
+      return res.status(400).json({ message: 'Invalid action' });
+    }
+
+    user.lastBuddyInteraction = Date.now();
+    await user.save();
+
+    res.json({
+      success: true,
+      happiness: user.buddyHappiness,
+      fullness: user.buddyFullness,
+    });
+  } catch (error) {
+    console.error('POST /buddy/interact error:', error.message);
+    res.status(500).json({ message: 'Server error interacting with buddy' });
+  }
+});
+
+// @route   POST /buddy/feed
+// @desc    Feed the buddy (costs 10 kibble)
+// @access  Private
+router.post('/feed', protect, async (req, res) => {
+  try {
+    const user = req.user;
+    const cost = 10;
+
+    if (user.totalKibble < cost) {
+      return res.status(400).json({ message: 'Not enough kibble! Complete sessions to earn more.' });
+    }
+
+    if (user.buddyFullness >= 100) {
+      return res.status(400).json({ message: 'Your buddy is already full!' });
+    }
+
+    user.totalKibble -= cost;
+    user.buddyFullness = Math.min(100, user.buddyFullness + 20);
+    user.buddyHappiness = Math.min(100, user.buddyHappiness + 5);
+    user.lastBuddyInteraction = Date.now();
+
+    // Recalculate meals if needed
+    user.totalMealsProvided = Math.floor(user.totalKibble / 25);
+
+    await user.save();
+
+    res.json({
+      success: true,
+      happiness: user.buddyHappiness,
+      fullness: user.buddyFullness,
+      totalKibble: user.totalKibble,
+      totalMealsProvided: user.totalMealsProvided
+    });
+  } catch (error) {
+    console.error('POST /buddy/feed error:', error.message);
+    res.status(500).json({ message: 'Server error feeding buddy' });
+  }
+});
 
 // @route   GET /buddy/accessories
 // @desc    Get all accessories with owned/equipped status
@@ -36,10 +117,12 @@ router.get('/accessories', protect, async (req, res) => {
     const owned = await Accessory.find({ userId: user._id }).lean();
     const ownedMap = new Map(owned.map(a => [a.accessoryId, a]));
 
-    const accessories = ACCESSORY_CATALOG.map(item => {
+    const allAccessories = await AccessoryItem.find({ isActive: true }).sort({ order: 1 });
+
+    const accessories = allAccessories.map(item => {
       const ownedItem = ownedMap.get(item.id);
       return {
-        ...item,
+        ...item.toObject(),
         owned: !!ownedItem,
         equipped: ownedItem?.isEquipped || false,
         canBuy: canAccessTier(userTier, item.tier) && !ownedItem,
@@ -66,7 +149,7 @@ router.post('/accessories/buy', protect, async (req, res) => {
     const { accessoryId } = req.body;
     if (!accessoryId) return res.status(400).json({ message: 'accessoryId is required' });
 
-    const item = ACCESSORY_CATALOG.find(a => a.id === accessoryId);
+    const item = await AccessoryItem.findOne({ id: accessoryId, isActive: true });
     if (!item) return res.status(404).json({ message: 'Accessory not found' });
 
     const user = req.user;
@@ -124,7 +207,7 @@ router.post('/accessories/equip', protect, async (req, res) => {
     const { accessoryId, equip } = req.body;
     if (!accessoryId) return res.status(400).json({ message: 'accessoryId is required' });
 
-    const item = ACCESSORY_CATALOG.find(a => a.id === accessoryId);
+    const item = await AccessoryItem.findOne({ id: accessoryId, isActive: true });
     if (!item) return res.status(404).json({ message: 'Accessory not found' });
 
     const owned = await Accessory.findOne({ userId: req.user._id, accessoryId });

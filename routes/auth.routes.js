@@ -131,7 +131,7 @@ router.post('/signup', authLimiter, async (req, res) => {
     });
   } catch (error) {
     console.error('Signup error:', error.message);
-    
+
     // Handle duplicate key error
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
@@ -139,7 +139,7 @@ router.post('/signup', authLimiter, async (req, res) => {
         message: `${field === 'email' ? 'Email' : 'Username'} already exists`,
       });
     }
-    
+
     res.status(500).json({ message: 'Server error during signup' });
   }
 });
@@ -177,6 +177,11 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
         email: user.email,
         totalKibble: user.totalKibble,
         totalFocusMinutes: user.totalFocusMinutes,
+        dailyGoalMinutes: user.dailyGoalMinutes,
+        focusTags: user.focusTags,
+        onboardingCompleted: user.onboardingCompleted,
+        settings: user.settings,
+        notificationPrefs: user.notificationPrefs,
         token: generateToken(user._id),
       });
     }
@@ -212,6 +217,11 @@ router.post('/verify-otp', otpLimiter, async (req, res) => {
       email: user.email,
       totalKibble: user.totalKibble,
       totalFocusMinutes: user.totalFocusMinutes,
+      dailyGoalMinutes: user.dailyGoalMinutes,
+      focusTags: user.focusTags,
+      onboardingCompleted: user.onboardingCompleted,
+      settings: user.settings,
+      notificationPrefs: user.notificationPrefs,
       token: generateToken(user._id),
     });
   } catch (error) {
@@ -241,15 +251,15 @@ router.post('/resend-otp', async (req, res) => {
 
     // Check if already verified
     if (user.emailVerified) {
-      return res.json({ 
+      return res.json({
         message: 'Email is already verified',
-        emailVerified: true 
+        emailVerified: true
       });
     }
 
     // Check rate limiting
     const canResendResult = await VerificationToken.canResend(user._id, 'email');
-    
+
     if (!canResendResult.canResend) {
       return res.status(429).json({
         message: `Too many requests. Please wait before requesting a new code.`,
@@ -336,6 +346,11 @@ router.post('/login', authLimiter, async (req, res) => {
       email: user.email,
       totalKibble: user.totalKibble,
       totalFocusMinutes: user.totalFocusMinutes,
+      dailyGoalMinutes: user.dailyGoalMinutes,
+      focusTags: user.focusTags,
+      onboardingCompleted: user.onboardingCompleted,
+      settings: user.settings,
+      notificationPrefs: user.notificationPrefs,
       token: generateToken(user._id),
       emailVerified: user.emailVerified,
     });
@@ -364,7 +379,7 @@ router.post('/google', async (req, res) => {
     }
 
     // Check if user exists
-    let user = await User.findOne({ 
+    let user = await User.findOne({
       $or: [
         { email: googleUser.email },
         { googleId: googleUser.sub }
@@ -376,7 +391,7 @@ router.post('/google', async (req, res) => {
     if (!user) {
       // Create new user
       isNewUser = true;
-      
+
       // Generate unique username
       let username = googleUser.name.replace(/\s+/g, '').toLowerCase();
       const existingUsername = await User.findOne({ username });
@@ -443,7 +458,7 @@ router.post('/apple', async (req, res) => {
     }
 
     // Check if user exists
-    let user = await User.findOne({ 
+    let user = await User.findOne({
       $or: [
         { appleId: appleData.sub },
         ...(userEmail ? [{ email: userEmail }] : [])
@@ -455,13 +470,13 @@ router.post('/apple', async (req, res) => {
     if (!user) {
       // Create new user
       isNewUser = true;
-      
+
       // Generate unique username
       let username = appleData.name.replace(/\s+/g, '').toLowerCase();
       if (!username || username === 'appleuser') {
         username = `user${Date.now().toString().slice(-6)}`;
       }
-      
+
       const existingUsername = await User.findOne({ username });
       if (existingUsername) {
         username = `${username}${Date.now().toString().slice(-4)}`;
@@ -528,7 +543,7 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
 
     // Check rate limiting
     const canResendResult = await VerificationToken.canResend(user._id, 'password');
-    
+
     if (!canResendResult.canResend) {
       return res.status(429).json({
         message: `Too many requests. Please wait before requesting a new code.`,
@@ -583,7 +598,7 @@ router.post('/verify-reset-otp', otpLimiter, async (req, res) => {
 
     // Verify OTP (don't delete it yet - we need it for the password reset step)
     const verificationToken = await VerificationToken.findOne({ userId, type: 'password' });
-    
+
     if (!verificationToken) {
       return res.status(400).json({ message: 'No verification code found. Please request a new one.' });
     }
@@ -591,18 +606,18 @@ router.post('/verify-reset-otp', otpLimiter, async (req, res) => {
     // Check if expired
     if (verificationToken.expiresAt < new Date()) {
       await VerificationToken.deleteOne({ _id: verificationToken._id });
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: 'Verification code has expired. Please request a new one.',
-        expired: true 
+        expired: true
       });
     }
 
     // Check if max attempts exceeded
     if (verificationToken.attempts >= verificationToken.maxAttempts) {
       await VerificationToken.deleteOne({ _id: verificationToken._id });
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: 'Too many failed attempts. Please request a new code.',
-        maxAttempts: true 
+        maxAttempts: true
       });
     }
 
@@ -610,7 +625,7 @@ router.post('/verify-reset-otp', otpLimiter, async (req, res) => {
     if (verificationToken.otp !== otp) {
       verificationToken.attempts += 1;
       await verificationToken.save();
-      
+
       const remainingAttempts = verificationToken.maxAttempts - verificationToken.attempts;
       return res.status(400).json({
         message: `Invalid code. ${remainingAttempts} attempt${remainingAttempts !== 1 ? 's' : ''} remaining.`,
@@ -651,10 +666,10 @@ router.post('/reset-password', authLimiter, async (req, res) => {
     }
 
     // Find verification token with reset token
-    const verificationToken = await VerificationToken.findOne({ 
-      userId, 
+    const verificationToken = await VerificationToken.findOne({
+      userId,
       type: 'password',
-      resetToken 
+      resetToken
     });
 
     if (!verificationToken) {
@@ -692,22 +707,22 @@ router.post('/reset-password', authLimiter, async (req, res) => {
 
 // Legacy route for backward compatibility - redirect to OTP verification
 router.post('/verify-email/:token', async (req, res) => {
-  return res.status(400).json({ 
+  return res.status(400).json({
     message: 'This verification method is no longer supported. Please use OTP verification.',
-    useOTP: true 
+    useOTP: true
   });
 });
 
 // Legacy route for backward compatibility
 router.post('/resend-verification', async (req, res) => {
   const { email } = req.body;
-  
+
   // Redirect to resend-otp
   const user = await User.findOne({ email: email?.toLowerCase() });
   if (user) {
     req.body.userId = user._id;
   }
-  
+
   // Forward to resend-otp handler logic
   try {
     if (!user) {
@@ -719,7 +734,7 @@ router.post('/resend-verification', async (req, res) => {
     }
 
     const canResendResult = await VerificationToken.canResend(user._id, 'email');
-    
+
     if (!canResendResult.canResend) {
       return res.status(429).json({
         message: 'Too many requests. Please wait before requesting a new code.',

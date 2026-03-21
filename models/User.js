@@ -244,6 +244,23 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
 
+    // ============ PREFERENCES ============
+    settings: {
+      soundEnabled: { type: Boolean, default: true },
+      notificationsEnabled: { type: Boolean, default: true },
+      vibrationEnabled: { type: Boolean, default: true },
+      theme: { type: String, enum: ['system', 'light', 'dark'], default: 'system' },
+      defaultTimerDuration: { type: Number, default: 25 },
+    },
+
+    notificationPrefs: {
+      streakReminders: { type: Boolean, default: true },
+      dailyReminder: { type: Boolean, default: true },
+      reminderTime: { type: String, default: '09:00' },
+      buddyHungerAlerts: { type: Boolean, default: true },
+      weeklySummary: { type: Boolean, default: true },
+    },
+
     // Legacy field - keeping for compatibility
     selectedBreed: {
       type: String,

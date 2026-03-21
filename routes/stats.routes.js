@@ -61,6 +61,11 @@ router.get('/', protect, async (req, res) => {
         longestStreak: user.longestStreak,
         lastSessionDate: user.lastSessionDate,
       },
+      buddy: {
+        happiness: user.buddyHappiness,
+        fullness: user.buddyFullness,
+        lastInteraction: user.lastBuddyInteraction,
+      },
       chartData,
       tier: getEffectiveTier(user),
       streakCalendar: [],
@@ -348,7 +353,7 @@ router.get('/daily', protect, async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 30;
     const chartData = await DailyStats.getChartData(req.user._id, days);
-    
+
     res.json({
       days,
       data: chartData
@@ -365,11 +370,11 @@ router.get('/daily', protect, async (req, res) => {
 router.get('/history', protect, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 20;
-    
+
     const sessions = await Focus.find({ userId: req.user._id })
       .sort({ createdAt: -1 })
       .limit(limit);
-    
+
     res.json({
       sessions,
       total: await Focus.countDocuments({ userId: req.user._id })

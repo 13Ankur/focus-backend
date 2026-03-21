@@ -9,14 +9,16 @@ const connectDB = async () => {
 
   try {
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      family: 4, // Use IPv4
     });
     isConnected = true;
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
-    console.error(`MongoDB Connection Error: ${error.message}`);
-    console.error('Please ensure MongoDB is running or check your MONGODB_URI in .env');
-    // Don't exit - let the server run and return proper error responses
+    console.error(`❌ MongoDB Connection Error: ${error.message}`);
+    console.error('Check your network or MONGODB_URI in .env');
     isConnected = false;
   }
 };
