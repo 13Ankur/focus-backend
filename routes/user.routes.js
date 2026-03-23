@@ -281,6 +281,48 @@ router.post('/use-streak-shield', protect, async (req, res) => {
   }
 });
 
+// @route   PATCH /user/profile
+// @desc    Update user profile (username, avatar, etc)
+// @access  Private
+router.patch('/profile', protect, async (req, res) => {
+  try {
+    const { username, avatar } = req.body;
+    const user = await User.findById(req.user._id);
+
+    if (username !== undefined) {
+      if (!username.trim()) {
+        return res.status(400).json({ message: 'Username cannot be empty' });
+      }
+      // Check if username already exists for another user
+      const existingUser = await User.findOne({
+        username: { $regex: new RegExp(`^${username.trim()}$`, 'i') },
+        _id: { $ne: req.user._id }
+      });
+      if (existingUser) {
+        return res.status(400).json({ message: 'Username is already taken' });
+      }
+      user.username = username.trim();
+    }
+
+    if (avatar !== undefined) user.avatar = avatar;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      user: {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+        avatar: user.avatar
+      }
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ message: 'Server error updating profile' });
+  }
+});
+
 // @route   PATCH /user/settings
 // @desc    Update user preferences
 // @access  Private

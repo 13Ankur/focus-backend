@@ -199,7 +199,12 @@ router.post('/complete', protect, async (req, res) => {
     const dailyLimit = DAILY_KIBBLE_LIMITS[effectiveTier] ?? DAILY_KIBBLE_LIMITS.free;
 
     const dailyKibbleUsed = await getDailyKibbleUsed(req.user._id, today);
-    let kibbleEarned = duration; // 1 kibble per minute
+
+    // Dynamic kibble with focus bonuses:
+    // 15: 15+0=15, 25: 25+5=30, 45: 45+10=55, 60: 60+15=75, 90: 90+30=120, 120: 120+60=180
+    const REWARD_MAP = { 15: 15, 25: 30, 45: 55, 60: 75, 90: 120, 120: 180 };
+    let kibbleEarned = REWARD_MAP[duration] || duration;
+
     const remaining = dailyLimit - dailyKibbleUsed;
     if (remaining <= 0 && dailyLimit !== Infinity) {
       kibbleEarned = 0;

@@ -14,14 +14,14 @@ async function getBreedThresholdMap() {
 }
 
 export async function checkAndUnlockBreeds(user) {
-  const sessions = user.completedSessions || 0;
+  const kibble = user.totalKibble || 0;
   const newlyUnlocked = [];
 
   const allBreeds = await Breed.find({ isActive: true }).sort({ order: 1 });
 
   for (const breed of allBreeds) {
     if (
-      sessions >= (breed.sessionsRequired || 0) &&
+      kibble >= (breed.unlockRequirement || 0) &&
       !user.unlockedBreeds.includes(breed.id)
     ) {
       user.unlockedBreeds.push(breed.id);
@@ -35,7 +35,7 @@ export async function checkAndUnlockBreeds(user) {
 router.get('/', protect, async (req, res) => {
   try {
     const user = req.user;
-    const sessions = user.completedSessions || 0;
+    const kibble = user.totalKibble || 0;
 
     const newlyUnlocked = await checkAndUnlockBreeds(user);
     if (newlyUnlocked.length > 0) {
@@ -47,10 +47,10 @@ router.get('/', protect, async (req, res) => {
       ...breed.toObject(),
       unlocked: user.unlockedBreeds.includes(breed.id),
       isActive: user.activeBreed === breed.id,
-      progress: breed.sessionsRequired === 0
+      progress: breed.unlockRequirement === 0
         ? 100
-        : Math.min(100, (sessions / breed.sessionsRequired) * 100),
-      sessionsToUnlock: Math.max(0, breed.sessionsRequired - sessions),
+        : Math.min(100, (kibble / breed.unlockRequirement) * 100),
+      kibbleToUnlock: Math.max(0, breed.unlockRequirement - kibble),
     }));
 
     res.json({
@@ -113,11 +113,11 @@ router.post('/active', protect, async (req, res) => {
     const user = req.user;
 
     if (!user.unlockedBreeds.includes(breedId)) {
-      const threshold = breed.sessionsRequired || 0;
+      const threshold = breed.unlockRequirement || 0;
       return res.status(403).json({
         message: 'Breed is locked',
-        sessionsNeeded: Math.max(0, threshold - (user.completedSessions || 0)),
-        sessionsRequired: threshold,
+        kibbleNeeded: Math.max(0, threshold - (user.totalKibble || 0)),
+        kibbleRequired: threshold,
       });
     }
 
@@ -198,13 +198,13 @@ router.post('/unlock', protect, async (req, res) => {
       return res.status(409).json({ message: 'Breed already unlocked' });
     }
 
-    const threshold = breed.sessionsRequired || 0;
-    const sessions = user.completedSessions || 0;
-    if (sessions < threshold) {
+    const threshold = breed.unlockRequirement || 0;
+    const kibble = user.totalKibble || 0;
+    if (kibble < threshold) {
       return res.status(403).json({
-        message: 'Not enough sessions',
-        sessionsNeeded: threshold - sessions,
-        sessionsRequired: threshold,
+        message: 'Not enough kibble',
+        kibbleNeeded: threshold - kibble,
+        kibbleRequired: threshold,
       });
     }
 
