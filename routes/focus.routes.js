@@ -254,8 +254,8 @@ router.post('/complete', protect, async (req, res) => {
     // ── Meals ──
     updatedUser.totalMealsProvided = Math.floor(updatedUser.totalKibble / KIBBLE_PER_MEAL);
 
-    // ── Breed unlocks (session-based) ──
-    const newlyUnlocked = checkAndUnlockBreeds(updatedUser);
+    // ── Breed unlocks (kibble-based) ──
+    const newlyUnlocked = await checkAndUnlockBreeds(updatedUser);
 
     await updatedUser.save();
 
