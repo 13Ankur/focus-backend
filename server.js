@@ -102,22 +102,25 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many requests, please try again later.' },
+  skip: (req) => req.method === 'OPTIONS',
 });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: isProduction ? 10 : 100,
+  max: isProduction ? 12 : 120, // Slightly increased
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many auth attempts, please try again later.' },
+  skip: (req) => req.method === 'OPTIONS',
 });
 
 const focusLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: isProduction ? 20 : 200,
+  max: isProduction ? 30 : 300, // Increased for mobile stability
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many focus requests, please try again later.' },
+  skip: (req) => req.method === 'OPTIONS',
 });
 
 // Webhook limiter is more generous — RevenueCat may send bursts
@@ -140,8 +143,14 @@ const ALLOWED_ORIGINS = [
   'capacitor://localhost',
   'ionic://localhost',
   'http://localhost',
+  'http://localhost:8100',
   'http://192.168.29.31',
-  'http://192.168.29.31:8100', // Ionic default port
+  'http://192.168.29.31:8100',
+  'http://192.168.1.10', // Common local IP
+  'http://192.168.1.10:8100',
+  'capacitor://localhost',
+  'http://localhost',
+  'null', // For some native requests
 ];
 
 const corsOptions = {
