@@ -15,7 +15,7 @@ const transactionSchema = new mongoose.Schema(
     },
     source: {
       type: String,
-      enum: ['purchase', 'reward_ad', 'session', 'refund', 'webhook'],
+      enum: ['purchase', 'reward_ad', 'session', 'refund', 'webhook', 'razorpay'],
       required: true,
     },
     type: {

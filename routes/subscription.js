@@ -7,9 +7,15 @@ import {
   getEffectiveTier,
   startTrial,
   isFeatureAvailable,
+  activateSubscription,
   FEATURE_TIERS,
   TIER_LEVELS,
 } from '../services/subscriptionService.js';
+import {
+  createSubscription,
+  verifySubscriptionPaymentSignature,
+  VALID_TIERS,
+} from '../services/razorpayService.js';
 
 const router = express.Router();
 
@@ -347,7 +353,7 @@ router.get('/status', protect, (req, res) => {
         end: user.trialEndDate,
         active: trialActive,
       },
-      isPremium: user.isPremium,
+      isPremium: (TIER_LEVELS[effectiveTier] ?? 0) >= TIER_LEVELS.pro,
     });
   } catch (err) {
     console.error('GET /subscription/status error:', err.message);
@@ -380,6 +386,135 @@ router.post('/start-trial', protect, async (req, res) => {
     }
     console.error('POST /subscription/start-trial error:', err.message);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Create Razorpay subscription (web checkout)
+router.post('/razorpay/create', protect, async (req, res) => {
+  try {
+    const tier = req.body?.tier || 'pro';
+
+    if (!VALID_TIERS.includes(tier)) {
+      return res.status(400).json({
+        error: 'invalid_tier',
+        message: 'Tier must be "pro".',
+      });
+    }
+
+    const result = await createSubscription(tier, req.user);
+    res.json(result);
+  } catch (err) {
+    console.error('POST /subscription/razorpay/create error:', err.message);
+    if (err.message.includes('not configured') || err.message.includes('plan ID') || err.message.includes('Invalid subscription tier')) {
+      return res.status(503).json({
+        error: 'razorpay_not_configured',
+        message: err.message.includes('Invalid')
+          ? 'Only Pro subscriptions are available right now.'
+          : 'Payment is temporarily unavailable. Please try again later.',
+      });
+    }
+    res.status(500).json({ message: 'Could not create subscription' });
+  }
+});
+
+// Verify Razorpay Subscription / Payment
+router.post('/verify-razorpay', protect, async (req, res) => {
+  try {
+    let { paymentId, subscriptionId, signature, tier = 'pro' } = req.body;
+
+    // Guardian product is disabled — map any legacy requests to Pro
+    if (tier === 'guardian') tier = 'pro';
+
+    if (!paymentId || !subscriptionId || !signature) {
+      return res.status(400).json({
+        error: 'missing_fields',
+        message: 'paymentId, subscriptionId, and signature are required.',
+      });
+    }
+
+    if (!VALID_TIERS.includes(tier)) {
+      return res.status(400).json({
+        error: 'invalid_tier',
+        message: 'Tier must be "pro".',
+      });
+    }
+
+    const valid = verifySubscriptionPaymentSignature({
+      paymentId,
+      subscriptionId,
+      signature,
+    });
+
+    if (!valid) {
+      return res.status(400).json({
+        error: 'invalid_signature',
+        message: 'Payment signature verification failed.',
+      });
+    }
+
+    // Idempotency: skip if this payment was already processed
+    const existingTxn = await Transaction.findOne({ transactionId: paymentId });
+    if (existingTxn) {
+      const user = await User.findById(req.user._id);
+      return res.json({
+        success: true,
+        message: 'Payment already verified',
+        tier: user?.subscriptionTier || tier,
+        expiry: user?.subscriptionExpiry || null,
+      });
+    }
+
+    const now = new Date();
+    const expiry = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    try {
+      await Transaction.create({
+        userId: req.user._id,
+        transactionId: paymentId,
+        source: 'razorpay',
+        type: 'subscription',
+        productId: subscriptionId,
+        amount: 0,
+        status: 'completed',
+      });
+    } catch (txnErr) {
+      // Unique index race — another request already recorded this payment
+      if (txnErr?.code === 11000) {
+        const user = await User.findById(req.user._id);
+        return res.json({
+          success: true,
+          message: 'Payment already verified',
+          tier: user?.subscriptionTier || tier,
+          expiry: user?.subscriptionExpiry || null,
+        });
+      }
+      throw txnErr;
+    }
+
+    const user = await activateSubscription(req.user._id, tier, 'web', expiry);
+    user.subscriptionCancelled = false;
+    user.subscriptionGracePeriod = false;
+    await user.save();
+
+    console.log(
+      `Razorpay subscription verified: user=${user._id}, tier=${tier}, expiry=${expiry}, payment=${paymentId}`,
+    );
+
+    res.json({
+      success: true,
+      message: 'Subscription verified successfully',
+      tier: user.subscriptionTier,
+      expiry: user.subscriptionExpiry,
+    });
+  } catch (err) {
+    console.error('POST /subscription/verify-razorpay error:', err.message);
+    if (err.message.includes('not configured')) {
+      return res.status(503).json({
+        error: 'razorpay_not_configured',
+        message: 'Payment is temporarily unavailable. Please try again later.',
+      });
+    }
+    res.status(500).json({ message: 'Could not verify payment' });
   }
 });
 

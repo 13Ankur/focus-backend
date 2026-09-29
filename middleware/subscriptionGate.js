@@ -10,8 +10,33 @@ import { getEffectiveTier, TIER_LEVELS } from '../services/subscriptionService.j
  */
 export function requireTier(minimumTier) {
   return async (req, res, next) => {
-    // Temporarily bypass all subscription checks — everything is free
-    return next();
+    try {
+      const user = req.user;
+      if (!user) {
+        return res.status(401).json({
+          error: 'unauthorized',
+          message: 'Authentication required.',
+        });
+      }
+
+      const effectiveTier = getEffectiveTier(user);
+      const userLevel = TIER_LEVELS[effectiveTier] ?? 0;
+      const requiredLevel = TIER_LEVELS[minimumTier] ?? 0;
+
+      if (userLevel < requiredLevel) {
+        return res.status(403).json({
+          error: 'upgrade_required',
+          requiredTier: minimumTier,
+          currentTier: effectiveTier,
+          message: `This feature requires ${minimumTier}. Upgrade to unlock.`,
+        });
+      }
+
+      return next();
+    } catch (err) {
+      console.error('requireTier error:', err.message);
+      return res.status(500).json({ message: 'Server error' });
+    }
   };
 }
 

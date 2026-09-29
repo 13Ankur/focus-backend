@@ -156,11 +156,6 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    subscriptionPlan: {
-      type: String,
-      enum: ['none', 'protector', 'champion', 'guardian'],
-      default: 'none',
-    },
 
     // ============ SUBSCRIPTION (TIERED) ============
     subscriptionTier: {

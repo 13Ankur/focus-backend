@@ -13,9 +13,9 @@ const FEATURE_TIERS = {
   ad_free: 'pro',
   streak_shield: 'pro',
   group_focus: 'pro',
-  gold_skins: 'guardian',
-  exclusive_breeds: 'guardian',
-  priority_support: 'guardian',
+  gold_skins: 'pro',
+  exclusive_breeds: 'pro',
+  priority_support: 'pro',
 };
 
 /**
@@ -23,8 +23,26 @@ const FEATURE_TIERS = {
  * expiry (but NOT persisting a downgrade — callers decide that).
  */
 export function getEffectiveTier(user) {
-  // Always return 'guardian' to unlock all premium features for everyone right now
-  return 'guardian';
+  if (!user) return 'free';
+
+  const now = new Date();
+
+  // Active trial?
+  if (user.trialUsed && user.trialEndDate && new Date(user.trialEndDate) > now) {
+    return 'pro';
+  }
+
+  // Active paid subscription?
+  if (user.subscriptionExpiry && new Date(user.subscriptionExpiry) > now) {
+    return user.subscriptionTier || 'pro';
+  }
+
+  // Direct tier setting on user document (admin / legacy override)
+  if (user.subscriptionTier && user.subscriptionTier !== 'free' && (!user.subscriptionExpiry || new Date(user.subscriptionExpiry) > now)) {
+    return user.subscriptionTier;
+  }
+
+  return 'free';
 }
 
 /**
@@ -100,8 +118,14 @@ export async function cancelSubscription(userId) {
  * Check whether a specific feature is available for the user's effective tier.
  */
 export function isFeatureAvailable(user, feature) {
-  // All features are currently free
-  return true;
+  const requiredTier = FEATURE_TIERS[feature];
+  if (!requiredTier) return true;
+
+  const effectiveTier = getEffectiveTier(user);
+  const userLevel = TIER_LEVELS[effectiveTier] ?? 0;
+  const requiredLevel = TIER_LEVELS[requiredTier] ?? 0;
+
+  return userLevel >= requiredLevel;
 }
 
 export { TIER_LEVELS, FEATURE_TIERS };
