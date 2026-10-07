@@ -22,7 +22,6 @@
     "jsonwebtoken": "^9.0.2",
     "mailersend": "^2.6.0",
     "mongoose": "^8.0.0",
-    "razorpay": "^2.9.8",
     "resend": "^6.9.4",
     "xss-clean": "^0.1.4"
   }
