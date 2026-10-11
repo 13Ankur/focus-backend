@@ -356,32 +356,12 @@ router.get('/status', protect, (req, res) => {
   }
 });
 
-// Start 7-day Pro trial
+// Start 7-day Pro trial (Discontinued)
 router.post('/start-trial', protect, async (req, res) => {
-  try {
-    const user = await startTrial(req.user._id);
-    const now = new Date();
-
-    res.json({
-      message: 'Trial started',
-      tier: 'pro',
-      trial: {
-        used: true,
-        start: user.trialStartDate,
-        end: user.trialEndDate,
-        active: user.trialEndDate > now,
-      },
-    });
-  } catch (err) {
-    if (err.message === 'Trial already used') {
-      return res.status(409).json({
-        error: 'trial_already_used',
-        message: 'You have already used your free trial.',
-      });
-    }
-    console.error('POST /subscription/start-trial error:', err.message);
-    res.status(500).json({ message: 'Server error' });
-  }
+  return res.status(403).json({
+    error: 'trials_disabled',
+    message: 'Free trials are no longer available. Please subscribe to StayPaws Pro.',
+  });
 });
 
 // Feature availability map for current user
