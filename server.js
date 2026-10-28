@@ -1,4 +1,10 @@
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 dotenv.config();
 
 import express from 'express';
@@ -7,7 +13,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoSanitize from 'express-mongo-sanitize';
 import xss from 'xss-clean';
-import connectDB, { isDBConnected } from './config/db.js';
+import connectDB, { isDBConnected, getDBStatus } from './config/db.js';
 import authRoutes from './routes/auth.routes.js';
 import focusRoutes from './routes/focus.routes.js';
 import userRoutes from './routes/user.routes.js';
@@ -19,7 +25,6 @@ import subscriptionRoutes from './routes/subscription.js';
 import achievementRoutes from './routes/achievement.routes.js';
 import socialRoutes from './routes/social.js';
 import { startSubscriptionCron } from './services/subscriptionCron.js';
-import path from 'path';
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -32,10 +37,12 @@ if (isProduction) {
   const requiredEnvVars = [
     'MONGODB_URI',
     'JWT_SECRET',
-    'SENDGRID_API_KEY',
     'APPLE_CLIENT_ID',
   ];
   const missingVars = requiredEnvVars.filter(v => !process.env[v]);
+  if (!process.env.RESEND_API_KEY && !process.env.SENDGRID_API_KEY) {
+    missingVars.push('RESEND_API_KEY (or SENDGRID_API_KEY)');
+  }
   if (missingVars.length > 0) {
     console.error('❌ Missing required environment variables:', missingVars.join(', '));
     process.exit(1);
@@ -75,6 +82,7 @@ app.use(
           imgSrc: ["'self'", 'data:', 'https:'],
           connectSrc: [
             "'self'",
+            'https://stayapi.zavvi.co.in',
             'https://staypawsapi.zavvi.co.in',
             'https://api.revenuecat.com',
           ],
@@ -138,6 +146,7 @@ app.use(generalLimiter);
 // ════════════════════════════════════════════════════════════════════
 
 const ALLOWED_ORIGINS = [
+  'https://stayapi.zavvi.co.in',
   'https://staypaws.zavvi.co.in',
   'https://pawsfocus.app',
   'capacitor://localhost',
@@ -184,9 +193,12 @@ app.use((req, res, next) => {
     return next();
   }
   if (!isDBConnected()) {
+    connectDB(); // Trigger background reconnect attempt if needed
+    const dbStatus = getDBStatus();
     return res.status(503).json({
       message: 'Database connection unavailable. Please try again later.',
-      dbStatus: 'disconnected',
+      dbStatus: dbStatus.state,
+      dbError: dbStatus.lastError || 'Connecting to database...',
     });
   }
   next();
@@ -221,9 +233,15 @@ app.get('/app-ads.txt', (req, res) => {
 // ════════════════════════════════════════════════════════════════════
 
 app.get('/health', (req, res) => {
+  const dbStatus = getDBStatus();
   res.json({
-    status: isDBConnected() ? 'ok' : 'degraded',
-    database: isDBConnected() ? 'connected' : 'disconnected',
+    status: dbStatus.isConnected ? 'ok' : 'degraded',
+    database: dbStatus.state,
+    dbDetails: {
+      hasMongoUri: dbStatus.hasMongoUri,
+      error: dbStatus.lastError,
+      host: dbStatus.host,
+    },
     environment: isProduction ? 'production' : 'development',
     timestamp: new Date().toISOString(),
   });
