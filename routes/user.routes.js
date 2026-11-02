@@ -377,15 +377,22 @@ router.patch('/settings', protect, async (req, res) => {
 // @access  Private
 router.patch('/onboarding', protect, async (req, res) => {
   try {
-    const { completed } = req.body;
+    const { completed, focusTags, dailyGoalMinutes } = req.body;
     const user = await User.findById(req.user._id);
 
-    user.onboardingCompleted = !!completed;
+    if (completed != null) user.onboardingCompleted = !!completed;
+    if (Array.isArray(focusTags)) {
+      user.focusTags = focusTags.filter(tag => typeof tag === 'string').slice(0, 8);
+    }
+    const goal = Number(dailyGoalMinutes);
+    if ([30, 60, 90, 120].includes(goal)) user.dailyGoalMinutes = goal;
     await user.save();
 
     res.json({
       success: true,
-      onboardingCompleted: user.onboardingCompleted
+      onboardingCompleted: user.onboardingCompleted,
+      focusTags: user.focusTags,
+      dailyGoalMinutes: user.dailyGoalMinutes,
     });
   } catch (error) {
     console.error('Update onboarding error:', error);

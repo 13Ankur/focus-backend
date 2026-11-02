@@ -340,6 +340,14 @@ router.post('/login', authLimiter, async (req, res) => {
       });
     }
 
+    const alreadyUsingApp = (user.totalFocusMinutes || 0) > 0
+      || (user.completedSessions || 0) > 0
+      || (Array.isArray(user.focusTags) && user.focusTags.length > 0);
+    if (!user.onboardingCompleted && alreadyUsingApp) {
+      user.onboardingCompleted = true;
+      await user.save();
+    }
+
     const now = new Date();
     const trialActive = !!(user.trialEndDate && new Date(user.trialEndDate) > now);
     const subActive = !!(
