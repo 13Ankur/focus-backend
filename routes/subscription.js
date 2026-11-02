@@ -343,21 +343,23 @@ router.get('/status', protect, (req, res) => {
     const user = req.user;
     const now = new Date();
     const effectiveTier = getEffectiveTier(user);
-    const trialActive = !!(user.trialUsed && user.trialEndDate && user.trialEndDate > now);
+    const isPremium = (TIER_LEVELS[effectiveTier] ?? 0) >= TIER_LEVELS.pro;
+    const trialActive = !!(user.trialEndDate && user.trialEndDate > now);
+    // Free accounts must not receive leftover Pro dates — clients used those to unlock UI.
 
     res.json({
       tier: effectiveTier,
-      expiry: user.subscriptionExpiry,
+      expiry: isPremium ? (user.subscriptionExpiry || null) : null,
       platform: user.subscriptionPlatform,
       cancelled: user.subscriptionCancelled || false,
       gracePeriod: user.subscriptionGracePeriod || false,
       trial: {
-        used: user.trialUsed,
-        start: user.trialStartDate,
-        end: user.trialEndDate,
+        used: !!user.trialUsed,
+        start: trialActive ? user.trialStartDate : null,
+        end: trialActive ? user.trialEndDate : null,
         active: trialActive,
       },
-      isPremium: (TIER_LEVELS[effectiveTier] ?? 0) >= TIER_LEVELS.pro,
+      isPremium,
     });
   } catch (err) {
     console.error('GET /subscription/status error:', err.message);
