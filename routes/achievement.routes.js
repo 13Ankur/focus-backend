@@ -10,7 +10,7 @@ router.get('/', protect, async (req, res) => {
     const achievements = await getAchievements(req.user._id);
 
     const unlocked = achievements.filter(a => a.unlocked).length;
-    const unclaimed = achievements.filter(a => a.unlocked && !a.claimed).length;
+    const unclaimed = achievements.filter(a => a.unlocked && !a.claimed && !a.proLocked).length;
     const total = achievements.length;
 
     res.json({
@@ -38,6 +38,9 @@ router.post('/claim', protect, async (req, res) => {
     }
     if (result.error === 'already_claimed') {
       return res.status(409).json(result);
+    }
+    if (result.error === 'pro_required') {
+      return res.status(403).json(result);
     }
 
     res.json(result);

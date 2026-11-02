@@ -4,16 +4,12 @@ import DailyStats from '../models/DailyStats.js';
 import Focus from '../models/Focus.js';
 import protect from '../middleware/auth.middleware.js';
 import { getEffectiveTier } from '../services/subscriptionService.js';
+import { resolveTimezone, todayInTimezone, addDays } from '../utils/localDate.js';
+import { syncUserStreak } from '../services/streakService.js';
 
 const router = express.Router();
 
 const KIBBLE_PER_MEAL = 25;
-
-function dateDaysAgo(days) {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split('T')[0];
-}
 
 // @route   GET /stats
 // @desc    Get user's full stats with tag breakdown & insights (tier-gated)
@@ -21,20 +17,17 @@ function dateDaysAgo(days) {
 router.get('/', protect, async (req, res) => {
   try {
     const user = req.user;
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInTimezone(resolveTimezone(req.headers['x-timezone']));
+    const daysAgo = (days) => addDays(today, -days);
 
     const todayStats = await DailyStats.findOne({ userId: user._id, date: today });
-    const weeklyStats = await DailyStats.getWeeklyStats(user._id);
-    const chartData = await DailyStats.getChartData(user._id, 7);
+    const weeklyStats = await DailyStats.getWeeklyStats(user._id, today);
+    const chartData = await DailyStats.getChartData(user._id, 7, today);
 
-    if (user.lastSessionDate) {
-      const diffDays = Math.floor(
-        (new Date(today).getTime() - new Date(user.lastSessionDate).getTime()) / 86400000
-      );
-      if (diffDays > 1) {
-        user.currentStreak = 0;
-        await user.save();
-      }
+    try {
+      await syncUserStreak(user, today);
+    } catch (streakError) {
+      console.error('Streak sync failed:', streakError.message);
     }
 
     const response = {
@@ -73,7 +66,7 @@ router.get('/', protect, async (req, res) => {
     };
 
     // Streak calendar — last 30 days (available to all)
-    const calendarStart = dateDaysAgo(29);
+    const calendarStart = daysAgo(29);
     const calendarDays = await DailyStats.find({
       userId: user._id,
       date: { $gte: calendarStart },
@@ -82,7 +75,7 @@ router.get('/', protect, async (req, res) => {
     const dailyGoal = parseInt(req.query.dailyGoal) || 60;
 
     for (let i = 29; i >= 0; i--) {
-      const dateStr = dateDaysAgo(i);
+      const dateStr = daysAgo(i);
       const d = calendarMap.get(dateStr);
       response.streakCalendar.push({
         date: dateStr,
@@ -93,7 +86,7 @@ router.get('/', protect, async (req, res) => {
     }
 
     // Monthly stats
-    const monthlyStats = await DailyStats.getMonthlyStats(user._id);
+    const monthlyStats = await DailyStats.getMonthlyStats(user._id, today);
     response.month = monthlyStats;
 
     // Tag breakdown (last 30 days)
@@ -166,9 +159,9 @@ router.get('/', protect, async (req, res) => {
     }
 
     // 4. Week-over-week trend
-    const thisWeekStart = dateDaysAgo(6);
-    const lastWeekStart = dateDaysAgo(13);
-    const lastWeekEnd = dateDaysAgo(7);
+    const thisWeekStart = daysAgo(6);
+    const lastWeekStart = daysAgo(13);
+    const lastWeekEnd = daysAgo(7);
     const thisWeekDays = await DailyStats.find({
       userId: user._id, date: { $gte: thisWeekStart },
     }).lean();
@@ -290,7 +283,7 @@ router.post('/session', protect, async (req, res) => {
     }
 
     const user = req.user;
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInTimezone(resolveTimezone(req.headers['x-timezone']));
 
     const focusSession = new Focus({
       userId: user._id,
@@ -307,7 +300,6 @@ router.post('/session', protect, async (req, res) => {
       user.completedSessions += 1;
       user.totalMealsProvided = Math.floor(user.totalKibble / 25);
 
-      user.updateStreak(today);
       const newlyUnlocked = user.checkBreedUnlocks();
       await user.save();
 
@@ -316,6 +308,7 @@ router.post('/session', protect, async (req, res) => {
       dailyStats.sessionsCompleted += 1;
       dailyStats.kibbleEarned += kibbleEarned || focusMinutes;
       await dailyStats.save();
+      await syncUserStreak(user, today);
 
       res.json({
         success: true,
@@ -352,7 +345,8 @@ router.post('/session', protect, async (req, res) => {
 router.get('/daily', protect, async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 30;
-    const chartData = await DailyStats.getChartData(req.user._id, days);
+    const today = todayInTimezone(resolveTimezone(req.headers['x-timezone']));
+    const chartData = await DailyStats.getChartData(req.user._id, days, today);
 
     res.json({
       days,

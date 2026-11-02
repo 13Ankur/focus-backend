@@ -13,9 +13,23 @@ async function getBreedThresholdMap() {
   return map;
 }
 
+const STARTER_BREEDS = ['golden_retriever', 'husky'];
+
 export async function checkAndUnlockBreeds(user) {
   const kibble = user.totalKibble || 0;
   const newlyUnlocked = [];
+
+  if (!Array.isArray(user.unlockedBreeds)) user.unlockedBreeds = [];
+  let addedStarter = false;
+  for (const id of STARTER_BREEDS) {
+    if (!user.unlockedBreeds.includes(id)) {
+      user.unlockedBreeds.push(id);
+      addedStarter = true;
+    }
+  }
+  if (addedStarter) {
+    await user.save();
+  }
 
   const allBreeds = await Breed.find({ isActive: true }).sort({ order: 1 });
 

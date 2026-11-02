@@ -25,9 +25,14 @@ import subscriptionRoutes from './routes/subscription.js';
 import achievementRoutes from './routes/achievement.routes.js';
 import socialRoutes from './routes/social.js';
 import { startSubscriptionCron } from './services/subscriptionCron.js';
+import { log } from './utils/logger.js';
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
+
+// Hostinger terminates TLS and forwards X-Forwarded-For. Trust exactly one proxy
+// so rate limits use the visitor IP. `true` would let clients spoof that IP.
+app.set('trust proxy', 1);
 
 // ════════════════════════════════════════════════════════════════════
 //  Environment validation (production)
@@ -106,7 +111,7 @@ app.use(xss());
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: isProduction ? 100 : 1000,
+  max: isProduction ? 600 : 2000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Too many requests, please try again later.' },
@@ -181,7 +186,14 @@ app.use(cors(corsOptions));
 //  Body parser — 1 MB limit
 // ════════════════════════════════════════════════════════════════════
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({
+  limit: '1mb',
+  verify: (req, _res, buf) => {
+    if (req.originalUrl?.startsWith('/subscription/razorpay/webhook')) {
+      req.rawBody = buf;
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 
 // ════════════════════════════════════════════════════════════════════
@@ -216,6 +228,7 @@ app.use('/breeds', breedRoutes);
 app.use('/buddy', buddyRoutes);
 app.use('/version', versionRoutes);
 app.use('/subscription/webhook', webhookLimiter);
+app.use('/subscription/razorpay/webhook', webhookLimiter);
 app.use('/subscription', subscriptionRoutes);
 app.use('/achievements', achievementRoutes);
 app.use('/social', socialRoutes);
@@ -260,7 +273,11 @@ app.use((err, req, res, _next) => {
   if (err.message === 'Not allowed by CORS') {
     return res.status(403).json({ message: 'Origin not allowed' });
   }
-  console.error('❌ Server error:', err.stack || err.message || err);
+  log('error', 'server_error', {
+    path: req.originalUrl,
+    method: req.method,
+    message: err.message || String(err),
+  });
   const message = isProduction ? 'Internal server error' : (err.message || 'Internal server error');
   res.status(500).json({ message });
 });

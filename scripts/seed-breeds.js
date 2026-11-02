@@ -28,7 +28,7 @@ const breeds = [
         image: 'assets/images/husky.png',
         eatingImage: 'assets/images/husky.png',
         sleepingImage: 'assets/images/husky_sleeping.png',
-        unlockRequirement: 150,
+        unlockRequirement: 0,
         sessionsRequired: 0,
         order: 2
     },

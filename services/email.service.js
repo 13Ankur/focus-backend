@@ -110,7 +110,7 @@ class EmailService {
             
             <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
             <p style="color: #999; font-size: 12px; text-align: center; margin: 0;">
-              © ${new Date().getFullYear()} Paws Focus. Helping shelter dogs, one focus session at a time.
+              © ${new Date().getFullYear()} Paws Focus.
             </p>
           </div>
         </body>
@@ -175,7 +175,7 @@ If you didn't request this code, please ignore this email.
             
             <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
             <p style="color: #999; font-size: 12px; text-align: center; margin: 0;">
-              © ${new Date().getFullYear()} Paws Focus. Helping shelter dogs, one focus session at a time.
+              © ${new Date().getFullYear()} Paws Focus.
             </p>
           </div>
         </body>
@@ -227,14 +227,13 @@ If you didn't request this code, please ignore this email.
               <ul style="color: #666; margin: 0; padding-left: 20px;">
                 <li style="margin-bottom: 10px;">🎯 Start a focus session to earn kibble</li>
                 <li style="margin-bottom: 10px;">🐕 Feed your virtual dog companion</li>
-                <li style="margin-bottom: 10px;">📊 Track your focus time and impact</li>
-                <li style="margin-bottom: 0;">🏆 Help real shelter dogs get meals!</li>
+                <li style="margin-bottom: 0;">📊 Track your focus time and streaks</li>
               </ul>
             </div>
             
             <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
             <p style="color: #999; font-size: 12px; text-align: center; margin: 0;">
-              © ${new Date().getFullYear()} Paws Focus. Helping shelter dogs, one focus session at a time.
+              © ${new Date().getFullYear()} Paws Focus.
             </p>
           </div>
         </body>
@@ -251,8 +250,7 @@ Your email has been verified! You're all set to start your focus journey.
 What's next?
 - Start a focus session to earn kibble
 - Feed your virtual dog companion  
-- Track your focus time and impact
-- Help real shelter dogs get meals!
+- Track your focus time and streaks
 
 © ${new Date().getFullYear()} Paws Focus
     `;

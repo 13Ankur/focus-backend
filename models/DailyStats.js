@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { addDays } from '../utils/localDate.js';
 
 const dailyStatsSchema = new mongoose.Schema(
   {
@@ -60,13 +61,9 @@ dailyStatsSchema.statics.getRange = async function(userId, startDate, endDate) {
 };
 
 // Static method to get weekly stats
-dailyStatsSchema.statics.getWeeklyStats = async function(userId) {
-  const today = new Date();
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 7);
-  
-  const startDate = weekAgo.toISOString().split('T')[0];
-  const endDate = today.toISOString().split('T')[0];
+dailyStatsSchema.statics.getWeeklyStats = async function(userId, todayStr) {
+  const endDate = todayStr || new Date().toISOString().split('T')[0];
+  const startDate = addDays(endDate, -6);
   
   const dailyData = await this.getRange(userId, startDate, endDate);
   
@@ -88,13 +85,9 @@ dailyStatsSchema.statics.getWeeklyStats = async function(userId) {
 };
 
 // Static method to get monthly stats
-dailyStatsSchema.statics.getMonthlyStats = async function(userId) {
-  const today = new Date();
-  const monthAgo = new Date(today);
-  monthAgo.setDate(monthAgo.getDate() - 30);
-  
-  const startDate = monthAgo.toISOString().split('T')[0];
-  const endDate = today.toISOString().split('T')[0];
+dailyStatsSchema.statics.getMonthlyStats = async function(userId, todayStr) {
+  const endDate = todayStr || new Date().toISOString().split('T')[0];
+  const startDate = addDays(endDate, -29);
   
   const dailyData = await this.getRange(userId, startDate, endDate);
   
@@ -115,39 +108,35 @@ dailyStatsSchema.statics.getMonthlyStats = async function(userId) {
 };
 
 // Static method to get chart data for last N days
-dailyStatsSchema.statics.getChartData = async function(userId, days = 7) {
-  const today = new Date();
+dailyStatsSchema.statics.getChartData = async function(userId, days = 7, todayStr) {
+  const today = todayStr || new Date().toISOString().split('T')[0];
   const result = [];
   const dayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-  
-  // Get all data for the range
-  const startDate = new Date(today);
-  startDate.setDate(startDate.getDate() - (days - 1));
-  
+  const startDate = addDays(today, -(days - 1));
+
   const dailyData = await this.find({
     userId,
-    date: { $gte: startDate.toISOString().split('T')[0] }
+    date: { $gte: startDate, $lte: today }
   });
-  
-  // Create a map for quick lookup
+
   const dataMap = new Map(dailyData.map(d => [d.date, d]));
-  
-  // Build result array
+
   for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(date.getDate() - i);
-    const dateString = date.toISOString().split('T')[0];
+    const dateString = addDays(today, -i);
+    const [year, month, day] = dateString.split('-').map(Number);
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
     const dayData = dataMap.get(dateString);
-    
+
     result.push({
-      label: dayLabels[date.getDay()],
+      label: dayLabels[weekday],
       date: dateString,
       minutes: dayData?.focusMinutes || 0,
       sessions: dayData?.sessionsCompleted || 0,
-      isToday: i === 0
+      kibble: dayData?.kibbleEarned || 0,
+      isToday: dateString === today
     });
   }
-  
+
   return result;
 };
 

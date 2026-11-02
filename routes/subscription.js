@@ -13,9 +13,13 @@ import {
 } from '../services/subscriptionService.js';
 import {
   createSubscription,
+  fetchSubscription,
   verifySubscriptionPaymentSignature,
+  verifyWebhookSignature,
+  resolveRazorpayEntitlement,
   VALID_TIERS,
 } from '../services/razorpayService.js';
+import { log } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -396,9 +400,18 @@ router.post('/razorpay/create', protect, async (req, res) => {
     }
 
     const result = await createSubscription(tier, req.user);
+    log('info', 'razorpay_create', {
+      userId: String(req.user._id),
+      tier: result.tier,
+      trial: result.trial,
+      subscriptionId: result.subscriptionId,
+    });
     res.json(result);
   } catch (err) {
-    console.error('POST /subscription/razorpay/create error:', err.message);
+    log('error', 'razorpay_create_failed', {
+      userId: String(req.user?._id || ''),
+      message: err.message,
+    });
     if (err.message.includes('not configured') || err.message.includes('plan ID') || err.message.includes('Invalid subscription tier')) {
       return res.status(503).json({
         error: 'razorpay_not_configured',
@@ -437,67 +450,75 @@ router.post('/verify-razorpay', protect, async (req, res) => {
     });
 
     if (!valid) {
+      log('warn', 'razorpay_bad_signature', {
+        userId: String(req.user._id),
+        paymentId,
+        subscriptionId,
+      });
       return res.status(400).json({
         error: 'invalid_signature',
         message: 'Payment signature verification failed.',
       });
     }
 
-    // Idempotency: skip if this payment was already processed
-    const existingTxn = await Transaction.findOne({ transactionId: paymentId });
-    if (existingTxn) {
-      const user = await User.findById(req.user._id);
-      return res.json({
-        success: true,
-        message: 'Payment already verified',
-        tier: user?.subscriptionTier || tier,
-        expiry: user?.subscriptionExpiry || null,
-      });
-    }
-
-    const now = new Date();
-    const expiry = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-
+    let remote = null;
     try {
-      await Transaction.create({
-        userId: req.user._id,
-        transactionId: paymentId,
-        source: 'razorpay',
-        type: 'subscription',
-        productId: subscriptionId,
-        amount: 0,
-        status: 'completed',
+      remote = await fetchSubscription(subscriptionId);
+    } catch (fetchErr) {
+      log('warn', 'razorpay_fetch_failed', {
+        userId: String(req.user._id),
+        subscriptionId,
+        message: fetchErr.message,
       });
-    } catch (txnErr) {
-      if (txnErr?.code === 11000) {
-        const user = await User.findById(req.user._id);
-        return res.json({
-          success: true,
-          message: 'Payment already verified',
-          tier: user?.subscriptionTier || tier,
-          expiry: user?.subscriptionExpiry || null,
-        });
-      }
-      throw txnErr;
     }
 
-    const user = await activateSubscription(req.user._id, tier, 'android', expiry);
-    user.subscriptionCancelled = false;
-    user.subscriptionGracePeriod = false;
-    await user.save();
+    const notesUserId = remote?.notes?.userId;
+    if (notesUserId && notesUserId !== String(req.user._id)) {
+      log('warn', 'razorpay_user_mismatch', {
+        userId: String(req.user._id),
+        notesUserId,
+        subscriptionId,
+      });
+      return res.status(403).json({
+        error: 'user_mismatch',
+        message: 'This payment belongs to a different account.',
+      });
+    }
 
-    console.log(
-      `Razorpay subscription verified: user=${user._id}, tier=${tier}, expiry=${expiry}, payment=${paymentId}`,
-    );
+    const { isTrial, expiry } = resolveRazorpayEntitlement(remote, req.user.trialUsed);
+    const platform = req.body?.platform === 'web' ? 'web' : 'android';
+    const user = await grantRazorpayAccess(req.user._id, {
+      tier,
+      platform,
+      expiry,
+      isTrial,
+      subscriptionId,
+      paymentId,
+    });
+
+    log('info', 'razorpay_verified', {
+      userId: String(user._id),
+      paymentId,
+      subscriptionId,
+      trial: isTrial,
+      expiry: expiry.toISOString(),
+      platform,
+    });
 
     res.json({
       success: true,
-      message: 'Subscription verified successfully',
+      message: isTrial
+        ? '7-day free trial started. Payment details saved.'
+        : 'Subscription verified successfully',
       tier: user.subscriptionTier,
       expiry: user.subscriptionExpiry,
+      trial: isTrial,
     });
   } catch (err) {
-    console.error('POST /subscription/verify-razorpay error:', err.message);
+    log('error', 'razorpay_verify_failed', {
+      userId: String(req.user?._id || ''),
+      message: err.message,
+    });
     if (err.message.includes('not configured')) {
       return res.status(503).json({
         error: 'razorpay_not_configured',
@@ -507,5 +528,232 @@ router.post('/verify-razorpay', protect, async (req, res) => {
     res.status(500).json({ message: 'Could not verify payment' });
   }
 });
+
+// Finish a payment that Razorpay already accepted if the app closed before verify.
+router.post('/razorpay/recover', protect, async (req, res) => {
+  try {
+    const subscriptionId = req.body?.subscriptionId;
+    if (!subscriptionId) {
+      return res.status(400).json({
+        error: 'missing_fields',
+        message: 'subscriptionId is required.',
+      });
+    }
+
+    const remote = await fetchSubscription(subscriptionId);
+    const notesUserId = remote?.notes?.userId;
+    const ownsSubscription = notesUserId
+      ? notesUserId === String(req.user._id)
+      : req.user.razorpaySubscriptionId === subscriptionId;
+
+    if (!ownsSubscription) {
+      log('warn', 'razorpay_recover_denied', {
+        userId: String(req.user._id),
+        subscriptionId,
+      });
+      return res.status(403).json({
+        error: 'user_mismatch',
+        message: 'This subscription belongs to a different account.',
+      });
+    }
+
+    const status = remote?.status;
+    if (status !== 'authenticated' && status !== 'active') {
+      return res.status(409).json({
+        error: 'not_confirmed',
+        message: 'Razorpay has not confirmed this payment yet.',
+      });
+    }
+
+    const { isTrial, expiry } = resolveRazorpayEntitlement(remote, req.user.trialUsed);
+    const platform = req.body?.platform === 'web' ? 'web' : 'android';
+    const user = await grantRazorpayAccess(req.user._id, {
+      tier: 'pro',
+      platform,
+      expiry,
+      isTrial,
+      subscriptionId,
+    });
+
+    log('info', 'razorpay_recovered', {
+      userId: String(user._id),
+      subscriptionId,
+      status,
+      trial: isTrial,
+      expiry: expiry.toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: 'Subscription restored',
+      tier: user.subscriptionTier,
+      expiry: user.subscriptionExpiry,
+      trial: isTrial,
+    });
+  } catch (err) {
+    log('error', 'razorpay_recover_failed', {
+      userId: String(req.user?._id || ''),
+      message: err.message,
+    });
+    res.status(500).json({ message: 'Could not restore the subscription' });
+  }
+});
+
+// Razorpay charges the saved payment method when the trial ends.
+// Dashboard webhook URL: POST /subscription/razorpay/webhook
+router.post('/razorpay/webhook', async (req, res) => {
+  const signature = req.headers['x-razorpay-signature'];
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+
+  if (webhookSecret) {
+    const valid = verifyWebhookSignature(req.rawBody, signature);
+    if (!valid) {
+      console.warn('Razorpay webhook signature failed');
+      return res.status(400).json({ error: 'invalid_signature' });
+    }
+  } else {
+    console.warn('RAZORPAY_WEBHOOK_SECRET is not set — accepting Razorpay webhook without signature check');
+  }
+
+  const event = req.body?.event;
+  const subscription = req.body?.payload?.subscription?.entity;
+  const payment = req.body?.payload?.payment?.entity;
+
+  if (!event || !subscription?.id) {
+    return res.status(200).json({ received: true });
+  }
+
+  const eventId = req.body?.id || `${event}_${subscription.id}_${payment?.id || ''}`;
+
+  try {
+    const existing = await WebhookLog.findOne({ eventId });
+    if (existing) {
+      return res.status(200).json({ received: true, duplicate: true });
+    }
+
+    await WebhookLog.create({
+      eventId,
+      eventType: event,
+      appUserId: subscription.notes?.userId || null,
+      productId: subscription.id,
+      processed: false,
+      rawPayload: req.body,
+    });
+
+    const user = await findRazorpayUser(subscription);
+    if (!user) {
+      console.warn(`Razorpay webhook ${event}: user not found for ${subscription.id}`);
+      return res.status(200).json({ received: true });
+    }
+
+    const periodEnd = subscription.current_end
+      ? new Date(subscription.current_end * 1000)
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    if (event === 'subscription.charged' || event === 'subscription.activated') {
+      user.subscriptionTier = 'pro';
+      user.subscriptionExpiry = periodEnd;
+      user.subscriptionPlatform = user.subscriptionPlatform || 'android';
+      user.isPremium = true;
+      user.subscriptionCancelled = false;
+      user.subscriptionGracePeriod = false;
+      user.razorpaySubscriptionId = subscription.id;
+      await user.save();
+
+      if (payment?.id) {
+        await Transaction.updateOne(
+          { transactionId: payment.id },
+          {
+            $setOnInsert: {
+              userId: user._id,
+              transactionId: payment.id,
+              source: 'razorpay',
+              type: 'subscription',
+              productId: subscription.id,
+              amount: typeof payment.amount === 'number' ? payment.amount / 100 : 0,
+              status: 'completed',
+            },
+          },
+          { upsert: true },
+        );
+      }
+
+      console.log(`Razorpay ${event}: user=${user._id} pro until ${periodEnd.toISOString()}`);
+    } else if (event === 'subscription.halted' || event === 'subscription.pending') {
+      user.subscriptionGracePeriod = true;
+      user.razorpaySubscriptionId = subscription.id;
+      await user.save();
+      console.log(`Razorpay ${event}: user=${user._id} payment failed after trial`);
+    } else if (event === 'subscription.cancelled') {
+      user.subscriptionCancelled = true;
+      user.razorpaySubscriptionId = subscription.id;
+      if (subscription.current_end) {
+        user.subscriptionExpiry = periodEnd;
+      }
+      await user.save();
+      console.log(`Razorpay subscription cancelled: user=${user._id}`);
+    }
+
+    await WebhookLog.updateOne({ eventId }, { $set: { processed: true } });
+  } catch (err) {
+    log('error', 'razorpay_webhook_failed', { event, message: err.message });
+    await WebhookLog.updateOne({ eventId }, { $set: { error: err.message } }).catch(() => {});
+  }
+
+  return res.status(200).json({ received: true });
+});
+
+async function grantRazorpayAccess(userId, {
+  tier,
+  platform,
+  expiry,
+  isTrial,
+  subscriptionId,
+  paymentId,
+  amount = 0,
+}) {
+  const user = await activateSubscription(userId, tier, platform, expiry);
+  user.subscriptionCancelled = false;
+  user.subscriptionGracePeriod = false;
+  user.razorpaySubscriptionId = subscriptionId;
+  if (isTrial) {
+    user.trialUsed = true;
+    if (!user.trialStartDate) user.trialStartDate = new Date();
+    user.trialEndDate = expiry;
+  }
+  await user.save();
+
+  if (paymentId) {
+    await Transaction.updateOne(
+      { transactionId: paymentId },
+      {
+        $setOnInsert: {
+          userId: user._id,
+          transactionId: paymentId,
+          source: 'razorpay',
+          type: 'subscription',
+          productId: subscriptionId,
+          amount,
+          status: 'completed',
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  return user;
+}
+
+async function findRazorpayUser(subscription) {
+  const notesUserId = subscription?.notes?.userId;
+  if (notesUserId && /^[0-9a-fA-F]{24}$/.test(notesUserId)) {
+    const byId = await User.findById(notesUserId);
+    if (byId) return byId;
+  }
+  if (subscription?.id) {
+    return User.findOne({ razorpaySubscriptionId: subscription.id });
+  }
+  return null;
+}
 
 export default router;

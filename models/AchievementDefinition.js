@@ -27,6 +27,11 @@ const achievementDefinitionSchema = new mongoose.Schema({
         enum: ['sessions', 'streaks', 'breeds', 'time', 'charity', 'special'],
         required: true,
     },
+    tier: {
+        type: String,
+        enum: ['free', 'pro'],
+        default: 'free',
+    },
     requirementType: {
         type: String,
         enum: ['completedSessions', 'currentStreak', 'unlockedBreeds', 'totalFocusMinutes', 'totalMealsProvided', 'sessionDuration', 'sessionTime'],

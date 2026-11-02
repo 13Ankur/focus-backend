@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import { log } from '../utils/logger.js';
 
 const protect = async (req, res, next) => {
   let token;
@@ -24,8 +25,15 @@ const protect = async (req, res, next) => {
 
       next();
     } catch (error) {
-      console.error('Auth middleware error:', error.message);
-      return res.status(401).json({ message: 'Not authorized, token failed' });
+      // Expired or malformed tokens are normal. Do not log them as server errors.
+      if (error?.name === 'TokenExpiredError' || error?.name === 'JsonWebTokenError') {
+        return res.status(401).json({
+          message: 'Session expired. Please log in again.',
+          code: 'token_expired',
+        });
+      }
+      log('error', 'auth_failed', { message: error?.message || 'unknown' });
+      return res.status(401).json({ message: 'Not authorized, token failed', code: 'token_expired' });
     }
   }
 

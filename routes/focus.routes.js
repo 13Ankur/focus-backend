@@ -9,6 +9,8 @@ import { getEffectiveTier, TIER_LEVELS } from '../services/subscriptionService.j
 import { checkAchievements } from '../services/achievementService.js';
 import { updateLeaderboard, touchRoomActivity } from './social.js';
 import { checkAndUnlockBreeds } from './breed.routes.js';
+import { resolveTimezone, todayInTimezone } from '../utils/localDate.js';
+import { syncUserStreak } from '../services/streakService.js';
 
 const router = express.Router();
 
@@ -23,7 +25,7 @@ const MIN_COMPLETION_INTERVAL_MS = 4 * 60 * 1000; // 4 minutes between completio
 
 const DAILY_KIBBLE_LIMITS = { free: 300, pro: 600, guardian: Infinity };
 
-const FREE_DURATIONS = [15, 25];
+const FREE_DURATIONS = [15];
 
 const FAILURE_TIPS = [
   'Try enabling Do Not Disturb',
@@ -42,26 +44,6 @@ setInterval(() => {
     if (data.createdAt < cutoff) sessionTokens.delete(token);
   }
 }, 30 * 60 * 1000);
-
-function resolveTimezone(header) {
-  if (!header) return 'UTC';
-  try {
-    Intl.DateTimeFormat(undefined, { timeZone: header });
-    return header;
-  } catch {
-    return 'UTC';
-  }
-}
-
-function getTodayInTimezone(tz) {
-  return new Date().toLocaleDateString('en-CA', { timeZone: tz });
-}
-
-function getYesterdayInTimezone(tz) {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toLocaleDateString('en-CA', { timeZone: tz });
-}
 
 async function getDailyKibbleUsed(userId, dateStr) {
   const stats = await DailyStats.findOne({ userId, date: dateStr });
@@ -88,12 +70,12 @@ router.post('/start', protect, checkSessionLimit, async (req, res) => {
 
     const effectiveTier = getEffectiveTier(req.user);
 
-    // Free users restricted to 15 or 25 minute sessions
+    // Free users stay on the 15 minute session. Longer lengths are Pro.
     if (TIER_LEVELS[effectiveTier] < TIER_LEVELS.pro && !FREE_DURATIONS.includes(duration)) {
       return res.status(403).json({
         allowed: false,
         reason: 'duration_locked',
-        message: 'Free users can use 15 or 25 minute sessions. Upgrade to Pro for custom durations.',
+        message: 'Free accounts can use a 15 minute session. Upgrade to Pro for longer durations.',
         allowedDurations: FREE_DURATIONS,
       });
     }
@@ -193,8 +175,7 @@ router.post('/complete', protect, async (req, res) => {
 
     // ── Kibble calculation with daily cap ──
     const tz = resolveTimezone(req.headers['x-timezone']);
-    const today = getTodayInTimezone(tz);
-    const yesterday = getYesterdayInTimezone(tz);
+    const today = todayInTimezone(tz);
     const effectiveTier = getEffectiveTier(req.user);
     const dailyLimit = DAILY_KIBBLE_LIMITS[effectiveTier] ?? DAILY_KIBBLE_LIMITS.free;
 
@@ -235,21 +216,7 @@ router.post('/complete', protect, async (req, res) => {
       { new: true }
     );
 
-    // ── Streak calculation (credit to session START date) ──
     const sessionDateStr = sessionStart.toLocaleDateString('en-CA', { timeZone: tz });
-
-    if (updatedUser.lastSessionDate !== sessionDateStr) {
-      if (updatedUser.lastSessionDate === yesterday || updatedUser.lastSessionDate === null) {
-        updatedUser.currentStreak = updatedUser.lastSessionDate === null ? 1 : updatedUser.currentStreak + 1;
-      } else {
-        updatedUser.currentStreak = 1;
-      }
-
-      if (updatedUser.currentStreak > updatedUser.longestStreak) {
-        updatedUser.longestStreak = updatedUser.currentStreak;
-      }
-      updatedUser.lastSessionDate = sessionDateStr;
-    }
 
     // ── Meals ──
     updatedUser.totalMealsProvided = Math.floor(updatedUser.totalKibble / KIBBLE_PER_MEAL);
@@ -260,7 +227,7 @@ router.post('/complete', protect, async (req, res) => {
     await updatedUser.save();
 
     // ── DailyStats upsert — handle midnight crossing ──
-    const sessionEndDate = now.toLocaleDateString('en-CA', { timeZone: tz });
+    const sessionEndDate = todayInTimezone(tz, now);
 
     if (sessionDateStr === sessionEndDate) {
       await DailyStats.findOneAndUpdate(
@@ -287,6 +254,12 @@ router.post('/complete', protect, async (req, res) => {
           { upsert: true }
         );
       }
+    }
+
+    try {
+      await syncUserStreak(updatedUser, today);
+    } catch (streakError) {
+      console.error('Streak update failed:', streakError.message);
     }
 
     // ── Achievement check ──
@@ -360,7 +333,7 @@ router.post('/fail', protect, async (req, res) => {
       );
 
       const tz = resolveTimezone(req.headers['x-timezone']);
-      const today = getTodayInTimezone(tz);
+      const today = todayInTimezone(tz);
       await DailyStats.findOneAndUpdate(
         { userId: req.user._id, date: today },
         { $inc: { focusMinutes: validMinutes, kibbleEarned: partialKibble } },

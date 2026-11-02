@@ -1,6 +1,15 @@
 import Achievement from '../models/Achievement.js';
 import User from '../models/User.js';
 import AchievementDefinition from '../models/AchievementDefinition.js';
+import { getEffectiveTier, TIER_LEVELS } from './subscriptionService.js';
+
+function isProUser(user) {
+  return (TIER_LEVELS[getEffectiveTier(user)] ?? 0) >= TIER_LEVELS.pro;
+}
+
+function isProAchievement(def) {
+  return def?.tier === 'pro' || String(def?.id || '').startsWith('pro_');
+}
 
 /**
  * Check all achievements for a user after a session completion.
@@ -16,8 +25,11 @@ export async function checkAchievements(userId, session = null, dailyStats = nul
     const existingIds = new Set(existing.map(a => a.achievementId));
     const newlyUnlocked = [];
 
+    const pro = isProUser(user);
+
     for (const def of definitions) {
       if (existingIds.has(def.id)) continue;
+      if (isProAchievement(def) && !pro) continue;
 
       let passed = false;
       try {
@@ -60,6 +72,14 @@ export async function checkAchievements(userId, session = null, dailyStats = nul
  * Claim an unlocked achievement and award kibble.
  */
 export async function claimAchievement(userId, achievementId) {
+  const user = await User.findById(userId);
+  if (!user) return { error: 'user_not_found', message: 'User not found' };
+
+  const definition = await AchievementDefinition.findOne({ id: achievementId });
+  if (isProAchievement(definition) && !isProUser(user)) {
+    return { error: 'pro_required', message: 'This achievement is for Pro members' };
+  }
+
   const achievement = await Achievement.findOne({ userId, achievementId });
   if (!achievement) {
     return { error: 'not_found', message: 'Achievement not found' };
@@ -70,9 +90,6 @@ export async function claimAchievement(userId, achievementId) {
 
   achievement.claimed = true;
   await achievement.save();
-
-  const user = await User.findById(userId);
-  if (!user) return { error: 'user_not_found', message: 'User not found' };
 
   user.totalKibble += achievement.kibbleReward;
   user.totalMealsProvided = Math.floor(user.totalKibble / 25);
@@ -96,13 +113,15 @@ export async function getAchievements(userId) {
   const user = await User.findById(userId);
   if (!user) return [];
 
+  const pro = isProUser(user);
   const definitions = await AchievementDefinition.find({ isActive: true }).sort({ order: 1 });
   const userAchievements = await Achievement.find({ userId });
   const achievementMap = new Map(userAchievements.map(a => [a.achievementId, a]));
 
   return definitions.map(def => {
     const record = achievementMap.get(def.id);
-    const unlocked = !!record;
+    const proLocked = isProAchievement(def) && !pro;
+    const unlocked = !!record && !proLocked;
     const claimed = record ? record.claimed : false;
 
     return {
@@ -112,6 +131,8 @@ export async function getAchievements(userId) {
       icon: def.icon,
       kibble: def.kibble,
       category: def.category,
+      tier: def.tier || (isProAchievement(def) ? 'pro' : 'free'),
+      proLocked,
       unlocked,
       claimed,
       unlockedAt: record ? record.unlockedAt : null,

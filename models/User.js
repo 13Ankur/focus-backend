@@ -1,10 +1,11 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import { daysBetween } from '../utils/localDate.js';
 
 // Breed unlock requirements (kibble needed)
 const BREED_UNLOCK_REQUIREMENTS = {
   golden_retriever: 0,
-  husky: 500,
+  husky: 0,
   shiba_inu: 1000,
   cavapoo: 2000,
   french_bulldog: 3000,
@@ -106,7 +107,7 @@ const userSchema = new mongoose.Schema(
     // ============ BREED COLLECTION ============
     unlockedBreeds: {
       type: [String],
-      default: ['golden_retriever'],
+      default: ['golden_retriever', 'husky'],
     },
     activeBreed: {
       type: String,
@@ -196,6 +197,10 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    razorpaySubscriptionId: {
+      type: String,
+      default: null,
+    },
     dailySessionCount: {
       type: Number,
       default: 0,
@@ -245,7 +250,7 @@ const userSchema = new mongoose.Schema(
       notificationsEnabled: { type: Boolean, default: true },
       vibrationEnabled: { type: Boolean, default: true },
       theme: { type: String, enum: ['system', 'light', 'dark'], default: 'system' },
-      defaultTimerDuration: { type: Number, default: 25 },
+      defaultTimerDuration: { type: Number, default: 15 },
     },
 
     notificationPrefs: {
@@ -292,26 +297,13 @@ userSchema.methods.checkBreedUnlocks = function () {
 userSchema.methods.updateStreak = function (sessionDate) {
   const today = sessionDate || new Date().toISOString().split('T')[0];
 
-  if (!this.lastSessionDate) {
-    // First session ever
-    this.currentStreak = 1;
+  if (!this.lastSessionDate || this.lastSessionDate === today) {
+    if (!this.lastSessionDate) this.currentStreak = 1;
   } else {
-    const lastDate = new Date(this.lastSessionDate);
-    const todayDate = new Date(today);
-    const diffDays = Math.floor((todayDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) {
-      // Same day, streak continues (no change)
-    } else if (diffDays === 1) {
-      // Consecutive day, increment streak
-      this.currentStreak += 1;
-    } else {
-      // Streak broken, reset to 1
-      this.currentStreak = 1;
-    }
+    const gap = daysBetween(this.lastSessionDate, today);
+    this.currentStreak = gap === 1 ? (this.currentStreak || 0) + 1 : 1;
   }
 
-  // Update longest streak
   if (this.currentStreak > this.longestStreak) {
     this.longestStreak = this.currentStreak;
   }

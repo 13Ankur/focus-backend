@@ -12,6 +12,8 @@ import LeaderboardEntry from '../models/LeaderboardEntry.js';
 import VerificationToken from '../models/VerificationToken.js';
 import FocusRoom from '../models/FocusRoom.js';
 import protect from '../middleware/auth.middleware.js';
+import { getEffectiveTier, TIER_LEVELS } from '../services/subscriptionService.js';
+import { resolveTimezone, todayInTimezone, addDays, daysBetween } from '../utils/localDate.js';
 
 const router = express.Router();
 
@@ -243,18 +245,15 @@ router.post('/use-streak-shield', protect, async (req, res) => {
       });
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayInTimezone(resolveTimezone(req.headers['x-timezone']));
 
     if (user.lastShieldUsedDate) {
-      const lastUsed = new Date(user.lastShieldUsedDate);
-      const daysSince = Math.floor(
-        (new Date(today).getTime() - lastUsed.getTime()) / 86400000
-      );
+      const daysSince = daysBetween(user.lastShieldUsedDate, today);
       if (daysSince < 7) {
         return res.status(429).json({
           error: 'shield_cooldown',
           message: `Streak shield recharges in ${7 - daysSince} day(s).`,
-          nextAvailable: new Date(lastUsed.getTime() + 7 * 86400000).toISOString().split('T')[0],
+          nextAvailable: addDays(user.lastShieldUsedDate, 7),
         });
       }
     }
@@ -273,7 +272,7 @@ router.post('/use-streak-shield', protect, async (req, res) => {
     res.json({
       success: true,
       streakPreserved: user.currentStreak,
-      nextShieldAvailable: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+      nextShieldAvailable: addDays(today, 7),
     });
   } catch (error) {
     console.error('POST /user/use-streak-shield error:', error.message);
@@ -336,7 +335,20 @@ router.patch('/settings', protect, async (req, res) => {
       if (settings.notificationsEnabled !== undefined) user.settings.notificationsEnabled = settings.notificationsEnabled;
       if (settings.vibrationEnabled !== undefined) user.settings.vibrationEnabled = settings.vibrationEnabled;
       if (settings.theme !== undefined) user.settings.theme = settings.theme;
-      if (settings.defaultTimerDuration !== undefined) user.settings.defaultTimerDuration = settings.defaultTimerDuration;
+      if (settings.defaultTimerDuration !== undefined) {
+        const minutes = Number(settings.defaultTimerDuration);
+        const isPro = (TIER_LEVELS[getEffectiveTier(user)] ?? 0) >= TIER_LEVELS.pro;
+        const stepOk = Number.isFinite(minutes) && minutes >= 5 && minutes <= 120 && minutes % 5 === 0;
+        const allowed = isPro ? stepOk : minutes === 15;
+        if (!allowed) {
+          return res.status(403).json({
+            message: isPro
+              ? 'Duration must be between 5 and 120 minutes, in steps of 5.'
+              : 'Free accounts can use a 15 minute focus session. Upgrade to Pro for longer sessions.',
+          });
+        }
+        user.settings.defaultTimerDuration = minutes;
+      }
     }
 
     if (notificationPrefs) {
