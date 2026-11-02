@@ -1,6 +1,7 @@
 import express from 'express';
 import protect from '../middleware/auth.middleware.js';
 import Breed from '../models/Breed.js';
+import { getEffectiveTier } from '../services/subscriptionService.js';
 
 const router = express.Router();
 
@@ -15,34 +16,65 @@ async function getBreedThresholdMap() {
 
 const STARTER_BREEDS = ['golden_retriever', 'husky'];
 
+/** Paid breeds keep a kibble floor even if the database row was saved as 0. */
+const BREED_KIBBLE_FLOOR = {
+  shiba_inu: 350,
+  cavapoo: 700,
+  french_bulldog: 1000,
+  labrador: 1400,
+  dachshund: 1800,
+  australian_shepherd: 2400,
+  maltese: 3200,
+};
+
+function breedCost(breed) {
+  const floor = BREED_KIBBLE_FLOOR[breed.id] ?? 0;
+  return Math.max(Number(breed.unlockRequirement || 0), floor);
+}
+
 export async function checkAndUnlockBreeds(user) {
   const kibble = user.totalKibble || 0;
   const newlyUnlocked = [];
+  const paid = getEffectiveTier(user) !== 'free';
 
   if (!Array.isArray(user.unlockedBreeds)) user.unlockedBreeds = [];
-  let addedStarter = false;
+  let changed = false;
   for (const id of STARTER_BREEDS) {
     if (!user.unlockedBreeds.includes(id)) {
       user.unlockedBreeds.push(id);
-      addedStarter = true;
+      changed = true;
     }
-  }
-  if (addedStarter) {
-    await user.save();
   }
 
   const allBreeds = await Breed.find({ isActive: true }).sort({ order: 1 });
-
+  const affordable = new Set(STARTER_BREEDS);
   for (const breed of allBreeds) {
-    if (
-      kibble >= (breed.unlockRequirement || 0) &&
-      !user.unlockedBreeds.includes(breed.id)
-    ) {
-      user.unlockedBreeds.push(breed.id);
-      newlyUnlocked.push(breed);
+    if (kibble >= breedCost(breed)) affordable.add(breed.id);
+  }
+
+  if (!paid) {
+    const before = user.unlockedBreeds.join(',');
+    user.unlockedBreeds = user.unlockedBreeds.filter(id => affordable.has(id));
+    for (const id of affordable) {
+      if (!user.unlockedBreeds.includes(id)) user.unlockedBreeds.push(id);
+    }
+    if (before !== user.unlockedBreeds.join(',')) changed = true;
+    if (!affordable.has(user.activeBreed)) {
+      user.activeBreed = 'golden_retriever';
+      user.selectedBreed = 'golden_retriever';
+      changed = true;
     }
   }
 
+  for (const breed of allBreeds) {
+    if (affordable.has(breed.id) && !user.unlockedBreeds.includes(breed.id)) {
+      user.unlockedBreeds.push(breed.id);
+      newlyUnlocked.push(breed);
+      changed = true;
+    }
+  }
+
+  if (changed) await user.save();
   return newlyUnlocked;
 }
 
@@ -126,13 +158,18 @@ router.post('/active', protect, async (req, res) => {
 
     const user = req.user;
 
-    if (!user.unlockedBreeds.includes(breedId)) {
-      const threshold = breed.unlockRequirement || 0;
+    const paid = getEffectiveTier(user) !== 'free';
+    const threshold = breedCost(breed);
+    const earned = (user.totalKibble || 0) >= threshold || STARTER_BREEDS.includes(breedId);
+    if (!paid && !earned) {
       return res.status(403).json({
         message: 'Breed is locked',
         kibbleNeeded: Math.max(0, threshold - (user.totalKibble || 0)),
         kibbleRequired: threshold,
       });
+    }
+    if (!user.unlockedBreeds.includes(breedId)) {
+      user.unlockedBreeds.push(breedId);
     }
 
     // Set active breed
@@ -212,7 +249,7 @@ router.post('/unlock', protect, async (req, res) => {
       return res.status(409).json({ message: 'Breed already unlocked' });
     }
 
-    const threshold = breed.unlockRequirement || 0;
+    const threshold = breedCost(breed);
     const kibble = user.totalKibble || 0;
     if (kibble < threshold) {
       return res.status(403).json({

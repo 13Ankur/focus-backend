@@ -32,6 +32,33 @@ async function downgradeExpiredSubscriptions() {
     console.error('Subscription expiry check error:', err.message);
   }
 
+  // isPremium / tier with no payment dates is not a subscription.
+  // Real purchases always store a platform and an expiry.
+  try {
+    const stale = await User.updateMany(
+      {
+        subscriptionTier: { $ne: 'free' },
+        subscriptionPlatform: null,
+        $and: [
+          { $or: [{ subscriptionExpiry: null }, { subscriptionExpiry: { $exists: false } }] },
+          {
+            $or: [
+              { trialEndDate: null },
+              { trialEndDate: { $exists: false } },
+              { trialEndDate: { $lte: now } },
+            ],
+          },
+        ],
+      },
+      { $set: { subscriptionTier: 'free', isPremium: false } },
+    );
+    if (stale.modifiedCount > 0) {
+      console.log(`🔄 Cleared ${stale.modifiedCount} subscription flag(s) with no expiry`);
+    }
+  } catch (err) {
+    console.error('Stale premium flag check error:', err.message);
+  }
+
   // Also expire finished trials
   try {
     const trialResult = await User.updateMany(

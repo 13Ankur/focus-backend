@@ -340,6 +340,15 @@ router.post('/login', authLimiter, async (req, res) => {
       });
     }
 
+    const now = new Date();
+    const trialActive = !!(user.trialEndDate && new Date(user.trialEndDate) > now);
+    const subActive = !!(
+      user.subscriptionExpiry &&
+      new Date(user.subscriptionExpiry) > now &&
+      (user.subscriptionTier === 'pro' || user.subscriptionTier === 'guardian')
+    );
+    const isPremium = trialActive || subActive;
+
     res.json({
       _id: user._id,
       username: user.username,
@@ -353,6 +362,11 @@ router.post('/login', authLimiter, async (req, res) => {
       notificationPrefs: user.notificationPrefs,
       token: generateToken(user._id),
       emailVerified: user.emailVerified,
+      isPremium,
+      subscriptionTier: isPremium ? (user.subscriptionTier || 'pro') : 'free',
+      subscriptionExpiry: user.subscriptionExpiry || null,
+      trialUsed: !!user.trialUsed,
+      trialEndDate: user.trialEndDate || null,
     });
   } catch (error) {
     console.error('Login error:', error.message);

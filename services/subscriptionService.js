@@ -27,19 +27,15 @@ export function getEffectiveTier(user) {
 
   const now = new Date();
 
-  // Active trial?
-  if (user.trialUsed && user.trialEndDate && new Date(user.trialEndDate) > now) {
+  // Active trial. A tier flag with no end date is not a subscription.
+  if (user.trialEndDate && new Date(user.trialEndDate) > now) {
     return 'pro';
   }
 
-  // Active paid subscription?
+  // Paid access only lasts until subscriptionExpiry.
   if (user.subscriptionExpiry && new Date(user.subscriptionExpiry) > now) {
-    return user.subscriptionTier || 'pro';
-  }
-
-  // Direct tier setting on user document (admin / legacy override)
-  if (user.subscriptionTier && user.subscriptionTier !== 'free' && (!user.subscriptionExpiry || new Date(user.subscriptionExpiry) > now)) {
-    return user.subscriptionTier;
+    const tier = user.subscriptionTier;
+    if (tier === 'pro' || tier === 'guardian') return tier;
   }
 
   return 'free';
