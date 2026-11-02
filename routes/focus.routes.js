@@ -4,7 +4,6 @@ import Focus from '../models/Focus.js';
 import User from '../models/User.js';
 import DailyStats from '../models/DailyStats.js';
 import protect from '../middleware/auth.middleware.js';
-import { checkSessionLimit } from '../middleware/sessionLimit.js';
 import { getEffectiveTier, TIER_LEVELS } from '../services/subscriptionService.js';
 import { checkAchievements } from '../services/achievementService.js';
 import { updateLeaderboard, touchRoomActivity } from './social.js';
@@ -52,7 +51,8 @@ async function getDailyKibbleUsed(userId, dateStr) {
 
 // ─── POST /focus/start ───────────────────────────────────────────────
 // Validates a session can begin; returns a sessionToken for /complete
-router.post('/start', protect, checkSessionLimit, async (req, res) => {
+// Free users are limited to 15-minute sessions only — no daily session count cap.
+router.post('/start', protect, async (req, res) => {
   try {
     const { duration } = req.body;
 
