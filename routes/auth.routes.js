@@ -37,6 +37,37 @@ const generateRandomPassword = () => {
   return Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-8);
 };
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  return EMAIL_REGEX.test(normalizeEmail(value));
+}
+
+function failureFromEmailResult(result, address) {
+  if (result?.success) return null;
+
+  const detail = String(result?.error || '').toLowerCase();
+  const rejectedAddress = !isValidEmail(address) || (
+    detail.includes('invalid') && (
+      detail.includes('email') ||
+      detail.includes('to') ||
+      detail.includes('recipient') ||
+      detail.includes('address')
+    )
+  );
+
+  if (rejectedAddress) {
+    return { status: 400, message: 'Please provide a valid email address' };
+  }
+
+  return { status: 500, message: 'Something went wrong. Please try again.' };
+}
+
 // @route   POST /auth/signup
 // @desc    Register a new user and send OTP
 // @access  Public
@@ -53,20 +84,19 @@ router.post('/signup', authLimiter, async (req, res) => {
       return res.status(400).json({ message: 'Password must be at least 6 characters' });
     }
 
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!isValidEmail(email)) {
       return res.status(400).json({ message: 'Please provide a valid email address' });
     }
+    const normalizedEmail = normalizeEmail(email);
 
     // Check if user already exists
     const existingUser = await User.findOne({
-      $or: [{ email: email.toLowerCase() }, { username }],
+      $or: [{ email: normalizedEmail }, { username }],
     });
 
     if (existingUser) {
       // If user exists but email not verified, allow re-registration with new OTP
-      if (existingUser.email === email.toLowerCase() && !existingUser.emailVerified) {
+      if (existingUser.email === normalizedEmail && !existingUser.emailVerified) {
         // Update password and send new OTP
         existingUser.password = password;
         existingUser.username = username;
@@ -75,7 +105,11 @@ router.post('/signup', authLimiter, async (req, res) => {
         // Generate and send OTP (handle rate limiting)
         try {
           const otp = await VerificationToken.createOTP(existingUser._id, existingUser.email, 'email');
-          await emailService.sendOTPEmail(existingUser, otp);
+          const sent = await emailService.sendOTPEmail(existingUser, otp);
+          const failure = failureFromEmailResult(sent, existingUser.email);
+          if (failure) {
+            return res.status(failure.status).json({ message: failure.message });
+          }
         } catch (otpError) {
           // If rate limited, still allow signup but inform user
           if (otpError.message.includes('Too many requests')) {
@@ -99,7 +133,7 @@ router.post('/signup', authLimiter, async (req, res) => {
 
       return res.status(400).json({
         message:
-          existingUser.email === email.toLowerCase()
+          existingUser.email === normalizedEmail
             ? 'Email already registered'
             : 'Username already taken',
       });
@@ -108,19 +142,23 @@ router.post('/signup', authLimiter, async (req, res) => {
     // Create user (email not verified yet)
     const user = await User.create({
       username,
-      email: email.toLowerCase(),
+      email: normalizedEmail,
       password,
       emailVerified: false,
       provider: 'email',
     });
 
-    // Generate and send OTP
+    // Generate and send OTP. Stay on signup if the address is rejected or the send fails.
     try {
       const otp = await VerificationToken.createOTP(user._id, user.email, 'email');
-      await emailService.sendOTPEmail(user, otp);
+      const sent = await emailService.sendOTPEmail(user, otp);
+      const failure = failureFromEmailResult(sent, user.email);
+      if (failure) {
+        return res.status(failure.status).json({ message: failure.message });
+      }
     } catch (emailError) {
       console.error('Error sending OTP email:', emailError);
-      // Don't fail signup if email fails
+      return res.status(500).json({ message: 'Something went wrong. Please try again.' });
     }
 
     res.status(201).json({
@@ -242,7 +280,10 @@ router.post('/resend-otp', async (req, res) => {
     if (userId) {
       user = await User.findById(userId);
     } else if (email) {
-      user = await User.findOne({ email: email.toLowerCase() });
+      if (!isValidEmail(email)) {
+        return res.status(400).json({ message: 'Please provide a valid email address' });
+      }
+      user = await User.findOne({ email: normalizeEmail(email) });
     }
 
     if (!user) {
@@ -268,15 +309,24 @@ router.post('/resend-otp', async (req, res) => {
       });
     }
 
+    if (!isValidEmail(user.email)) {
+      return res.status(400).json({ message: 'Please provide a valid email address' });
+    }
+
     // Generate and send new OTP
     try {
       const otp = await VerificationToken.createOTP(user._id, user.email, 'email');
-      await emailService.sendOTPEmail(user, otp);
+      const sent = await emailService.sendOTPEmail(user, otp);
+      const failure = failureFromEmailResult(sent, user.email);
+      if (failure) {
+        return res.status(failure.status).json({ message: failure.message });
+      }
     } catch (error) {
       if (error.message.includes('Too many requests')) {
         return res.status(429).json({ message: error.message });
       }
-      throw error;
+      console.error('Resend OTP send error:', error.message);
+      return res.status(500).json({ message: 'Something went wrong. Please try again.' });
     }
 
     res.json({
@@ -298,12 +348,16 @@ router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password) {
+    if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
       return res.status(400).json({ message: 'Please provide email and password' });
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Please provide a valid email address' });
+    }
+
     // Find user by email and include password for comparison
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    const user = await User.findOne({ email: normalizeEmail(email) }).select('+password');
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' });
@@ -323,12 +377,21 @@ router.post('/login', authLimiter, async (req, res) => {
 
     // Check if email is verified (only for email provider)
     if (user.provider === 'email' && !user.emailVerified) {
+      if (!isValidEmail(user.email)) {
+        return res.status(400).json({ message: 'Please provide a valid email address' });
+      }
+
       // Generate new OTP and send
       try {
         const otp = await VerificationToken.createOTP(user._id, user.email, 'email');
-        await emailService.sendOTPEmail(user, otp);
+        const sent = await emailService.sendOTPEmail(user, otp);
+        const failure = failureFromEmailResult(sent, user.email);
+        if (failure) {
+          return res.status(failure.status).json({ message: failure.message });
+        }
       } catch (otpError) {
         console.error('Error sending OTP during login:', otpError);
+        return res.status(500).json({ message: 'Something went wrong. Please try again.' });
       }
 
       return res.status(403).json({
@@ -541,12 +604,16 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email) {
+    if (typeof email !== 'string' || !email.trim()) {
       return res.status(400).json({ message: 'Email is required' });
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Please provide a valid email address' });
+    }
+
     // Find user
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const user = await User.findOne({ email: normalizeEmail(email) });
 
     if (!user) {
       // Don't reveal if user exists for security - but still return success-like response
@@ -573,15 +640,24 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
       });
     }
 
+    if (!isValidEmail(user.email)) {
+      return res.status(400).json({ message: 'Please provide a valid email address' });
+    }
+
     // Generate password reset OTP
     try {
       const otp = await VerificationToken.createOTP(user._id, user.email, 'password');
-      await emailService.sendPasswordResetOTPEmail(user, otp);
+      const sent = await emailService.sendPasswordResetOTPEmail(user, otp);
+      const failure = failureFromEmailResult(sent, user.email);
+      if (failure) {
+        return res.status(failure.status).json({ message: failure.message });
+      }
     } catch (error) {
       if (error.message.includes('Too many requests')) {
         return res.status(429).json({ message: error.message });
       }
-      throw error;
+      console.error('Password reset email error:', error.message);
+      return res.status(500).json({ message: 'Something went wrong. Please try again.' });
     }
 
     res.json({
@@ -739,8 +815,12 @@ router.post('/verify-email/:token', async (req, res) => {
 router.post('/resend-verification', async (req, res) => {
   const { email } = req.body;
 
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ message: 'Please provide a valid email address' });
+  }
+
   // Redirect to resend-otp
-  const user = await User.findOne({ email: email?.toLowerCase() });
+  const user = await User.findOne({ email: normalizeEmail(email) });
   if (user) {
     req.body.userId = user._id;
   }
@@ -764,8 +844,16 @@ router.post('/resend-verification', async (req, res) => {
       });
     }
 
+    if (!isValidEmail(user.email)) {
+      return res.status(400).json({ message: 'Please provide a valid email address' });
+    }
+
     const otp = await VerificationToken.createOTP(user._id, user.email, 'email');
-    await emailService.sendOTPEmail(user, otp);
+    const sent = await emailService.sendOTPEmail(user, otp);
+    const failure = failureFromEmailResult(sent, user.email);
+    if (failure) {
+      return res.status(failure.status).json({ message: failure.message });
+    }
 
     res.json({
       message: 'Verification code sent! Please check your email.',
