@@ -4,11 +4,14 @@ import Razorpay from 'razorpay';
 /** Only Free + Pro are offered right now */
 const VALID_TIERS = ['pro'];
 
-function getPlanIdForTier(tier) {
-  if (tier === 'pro') {
-    return process.env.RAZORPAY_PLAN_PRO || 'plan_TV7AXOU5yKFJtF';
+function getPlanIdForTier(tier, currency = 'INR') {
+  if (tier !== 'pro') return null;
+  if (currency === 'USD') {
+    return process.env.RAZORPAY_PLAN_PRO_USD || 'plan_TV7AXOU5yKFJtF';
   }
-  return null;
+  return process.env.RAZORPAY_PLAN_PRO_INR
+    || process.env.RAZORPAY_PLAN_PRO
+    || 'plan_TwjoiEnIXpsWbY';
 }
 
 function getRazorpayClient() {
@@ -30,14 +33,15 @@ const TRIAL_DAYS = 7;
  * after a 7-day trial. Anyone who already used a trial is charged immediately.
  * Returns { keyId, subscriptionId, tier, trial, trialEndsAt }.
  */
-export async function createSubscription(tier, user) {
+export async function createSubscription(tier, user, currency = 'INR') {
   const normalizedTier = tier === 'guardian' ? 'pro' : tier;
+  const normalizedCurrency = currency === 'USD' ? 'USD' : 'INR';
 
   if (!VALID_TIERS.includes(normalizedTier)) {
     throw new Error('Invalid subscription tier');
   }
 
-  const planId = getPlanIdForTier(normalizedTier);
+  const planId = getPlanIdForTier(normalizedTier, normalizedCurrency);
   if (!planId) {
     throw new Error(`Razorpay plan ID not configured for tier "${normalizedTier}"`);
   }
@@ -57,6 +61,7 @@ export async function createSubscription(tier, user) {
       tier: normalizedTier,
       email: user.email || '',
       trial: includeTrial ? 'true' : 'false',
+      currency: normalizedCurrency,
     },
   };
 
@@ -71,6 +76,7 @@ export async function createSubscription(tier, user) {
     keyId: process.env.RAZORPAY_KEY_ID || 'rzp_live_T0E1gmDDGHQVdV',
     subscriptionId: subscription.id,
     tier: normalizedTier,
+    currency: normalizedCurrency,
     trial: includeTrial,
     trialEndsAt: trialEndsAt ? trialEndsAt.toISOString() : null,
   };

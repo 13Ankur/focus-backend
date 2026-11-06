@@ -262,6 +262,71 @@ What's next?
       text
     );
   }
+
+  async sendProWelcomeEmail(user, { trial = false } = {}) {
+    const name = user.username || 'there';
+    const lead = trial
+      ? 'Your StayPaws Pro trial is on. The first charge comes after the trial.'
+      : 'Your StayPaws Pro membership is active.';
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>You're a StayPaws Pro member</title>
+        </head>
+        <body style="font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
+          <div style="background: linear-gradient(135deg, #2C5F2D 0%, #4caf50 100%); padding: 40px 30px; text-align: center; border-radius: 16px 16px 0 0;">
+            <h1 style="color: white; margin: 0; font-size: 28px;">🐾 StayPaws Pro</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0; font-size: 16px;">Welcome to Pro</p>
+          </div>
+          <div style="background: white; padding: 40px 30px; border-radius: 0 0 16px 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
+            <h2 style="color: #2C5F2D; margin: 0 0 20px; font-size: 22px; text-align: center;">You're a Pro member</h2>
+            <p style="color: #666; text-align: center; margin: 0 0 30px;">Hi ${name}, ${lead}</p>
+            <div style="background: #e8f5e9; border-radius: 12px; padding: 20px; margin: 0 0 30px;">
+              <h3 style="color: #2e7d32; margin: 0 0 15px; font-size: 16px;">What's unlocked</h3>
+              <ul style="color: #666; margin: 0; padding-left: 20px;">
+                <li style="margin-bottom: 10px;">Unlimited focus sessions and longer timers</li>
+                <li style="margin-bottom: 10px;">All dog breeds, focus sounds, and Pomodoro</li>
+                <li style="margin-bottom: 0;">App blocking during sessions</li>
+              </ul>
+            </div>
+            <p style="color: #999; text-align: center; font-size: 13px; margin: 0;">Open StayPaws and your Pro features are ready.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+            <p style="color: #999; font-size: 12px; text-align: center; margin: 0;">
+              © ${new Date().getFullYear()} StayPaws.
+            </p>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const text = `
+You're a StayPaws Pro member
+
+Hi ${name},
+
+${lead}
+
+What's unlocked:
+- Unlimited focus sessions and longer timers
+- All dog breeds, focus sounds, and Pomodoro
+- App blocking during sessions
+
+Open StayPaws and your Pro features are ready.
+
+© ${new Date().getFullYear()} StayPaws
+    `;
+
+    return await this.sendEmail(
+      user.email,
+      "You're a StayPaws Pro member",
+      html,
+      text
+    );
+  }
 }
 
 export default new EmailService();

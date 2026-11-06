@@ -20,6 +20,7 @@ import {
   VALID_TIERS,
 } from '../services/razorpayService.js';
 import { log } from '../utils/logger.js';
+import emailService from '../services/email.service.js';
 
 const router = express.Router();
 
@@ -28,6 +29,7 @@ const router = express.Router();
 const PRODUCT_TIER_MAP = {
   staypaws_pro_monthly: 'pro',
   staypaws_pro_annual: 'pro',
+  focus_dub: 'pro',
   staypaws_guardian_monthly: 'guardian',
   staypaws_guardian_annual: 'guardian',
 };
@@ -203,6 +205,7 @@ async function handleInitialPurchase(user, event) {
     ? new Date(event.expiration_at_ms)
     : null;
   const platform = detectPlatform(event);
+  const alreadyPro = isEffectivePro(user);
 
   user.subscriptionTier = tier;
   user.subscriptionExpiry = expiry;
@@ -217,9 +220,13 @@ async function handleInitialPurchase(user, event) {
 
   await user.save();
   console.log(`Subscription activated: user=${user._id}, tier=${tier}, expiry=${expiry}`);
+  if (!alreadyPro) {
+    notifyProMembership(user, { trial: event.period_type === 'TRIAL' });
+  }
 }
 
 async function handleRenewal(user, event) {
+  const alreadyPro = isEffectivePro(user);
   const expiry = event.expiration_at_ms
     ? new Date(event.expiration_at_ms)
     : user.subscriptionExpiry;
@@ -235,6 +242,9 @@ async function handleRenewal(user, event) {
   await user.save();
 
   console.log(`Subscription renewed: user=${user._id}, newExpiry=${expiry}`);
+  if (!alreadyPro && isEffectivePro(user)) {
+    notifyProMembership(user, { trial: event.period_type === 'TRIAL' });
+  }
 }
 
 async function handleCancellation(user, event) {
@@ -393,6 +403,7 @@ router.get('/features', protect, (req, res) => {
 router.post('/razorpay/create', protect, async (req, res) => {
   try {
     const tier = req.body?.tier || 'pro';
+    const currency = req.body?.currency || 'INR';
 
     if (!VALID_TIERS.includes(tier)) {
       return res.status(400).json({
@@ -401,10 +412,18 @@ router.post('/razorpay/create', protect, async (req, res) => {
       });
     }
 
-    const result = await createSubscription(tier, req.user);
+    if (currency !== 'INR' && currency !== 'USD') {
+      return res.status(400).json({
+        error: 'invalid_currency',
+        message: 'Currency must be INR or USD.',
+      });
+    }
+
+    const result = await createSubscription(tier, req.user, currency);
     log('info', 'razorpay_create', {
       userId: String(req.user._id),
       tier: result.tier,
+      currency: result.currency,
       trial: result.trial,
       subscriptionId: result.subscriptionId,
     });
@@ -653,6 +672,7 @@ router.post('/razorpay/webhook', async (req, res) => {
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
     if (event === 'subscription.charged' || event === 'subscription.activated') {
+      const alreadyPro = isEffectivePro(user);
       user.subscriptionTier = 'pro';
       user.subscriptionExpiry = periodEnd;
       user.subscriptionPlatform = user.subscriptionPlatform || 'android';
@@ -681,6 +701,7 @@ router.post('/razorpay/webhook', async (req, res) => {
       }
 
       console.log(`Razorpay ${event}: user=${user._id} pro until ${periodEnd.toISOString()}`);
+      if (!alreadyPro) notifyProMembership(user);
     } else if (event === 'subscription.halted' || event === 'subscription.pending') {
       user.subscriptionGracePeriod = true;
       user.razorpaySubscriptionId = subscription.id;
@@ -714,6 +735,8 @@ async function grantRazorpayAccess(userId, {
   paymentId,
   amount = 0,
 }) {
+  const existing = await User.findById(userId);
+  const alreadyPro = isEffectivePro(existing);
   const user = await activateSubscription(userId, tier, platform, expiry);
   user.subscriptionCancelled = false;
   user.subscriptionGracePeriod = false;
@@ -743,7 +766,20 @@ async function grantRazorpayAccess(userId, {
     );
   }
 
+  if (!alreadyPro) notifyProMembership(user, { trial: !!isTrial });
   return user;
+}
+
+function isEffectivePro(user) {
+  const tier = getEffectiveTier(user);
+  return tier === 'pro' || tier === 'guardian';
+}
+
+function notifyProMembership(user, options) {
+  if (!user?.email) return;
+  emailService.sendProWelcomeEmail(user, options).catch((err) => {
+    console.error('Pro welcome email failed:', err.message);
+  });
 }
 
 async function findRazorpayUser(subscription) {

@@ -44,6 +44,14 @@ function normalizeEmail(value) {
   return value.trim().toLowerCase();
 }
 
+async function findUserByEmail(email) {
+  const normalized = normalizeEmail(email);
+  const exact = await User.findOne({ email: normalized });
+  if (exact) return exact;
+  const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return User.findOne({ email: { $regex: `^${escaped}$`, $options: 'i' } });
+}
+
 function isValidEmail(value) {
   return EMAIL_REGEX.test(normalizeEmail(value));
 }
@@ -612,21 +620,18 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
       return res.status(400).json({ message: 'Please provide a valid email address' });
     }
 
-    // Find user
-    const user = await User.findOne({ email: normalizeEmail(email) });
+    const user = await findUserByEmail(email);
 
     if (!user) {
-      // Don't reveal if user exists for security - but still return success-like response
-      return res.json({
-        message: 'If an account exists with this email, a verification code has been sent.',
-        // Return a fake userId for security (frontend won't know if user exists)
+      return res.status(404).json({
+        message: 'No account found with this email.',
       });
     }
 
-    // Check if user uses email provider
-    if (user.provider !== 'email') {
+    if (user.provider === 'google' || user.provider === 'apple') {
+      const method = user.provider === 'apple' ? 'Apple' : 'Google';
       return res.status(400).json({
-        message: 'This account uses social login. Please use Google or Apple to sign in.',
+        message: `This account uses ${method} sign-in. Use Sign in with ${method}, not a password.`,
       });
     }
 
