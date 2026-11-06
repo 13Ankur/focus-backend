@@ -7,6 +7,7 @@ import User from '../models/User.js';
 import Transaction from '../models/Transaction.js';
 import Focus from '../models/Focus.js';
 import AdminAccount from '../models/AdminAccount.js';
+import AppVersion from '../models/AppVersion.js';
 import { getEffectiveTier } from '../services/subscriptionService.js';
 
 const router = express.Router();
@@ -303,6 +304,63 @@ router.get('/purchases', wrap(async (req, res) => {
       } : null,
     })),
   });
+}));
+
+function publicVersion(config) {
+  return {
+    platform: config.platform,
+    currentVersion: config.currentVersion,
+    minimumVersion: config.minimumVersion,
+    storeUrl: config.storeUrl,
+    releaseNotes: config.releaseNotes || '',
+    isMaintenanceMode: !!config.isMaintenanceMode,
+    maintenanceMessage: config.maintenanceMessage || '',
+    forceUpdate: !!config.forceUpdate,
+    updatedAt: config.updatedAt,
+  };
+}
+
+router.get('/versions', wrap(async (_req, res) => {
+  const configs = await AppVersion.find({ platform: { $in: ['ios', 'android'] } }).sort({ platform: 1 });
+  res.json({ versions: configs.map(publicVersion) });
+}));
+
+router.put('/versions/:platform', wrap(async (req, res) => {
+  const platform = String(req.params.platform || '').toLowerCase();
+  if (!['ios', 'android'].includes(platform)) {
+    return res.status(400).json({ message: 'Platform must be ios or android.' });
+  }
+
+  const currentVersion = String(req.body?.currentVersion || '').trim();
+  const minimumVersion = String(req.body?.minimumVersion || '').trim();
+  const storeUrl = String(req.body?.storeUrl || '').trim();
+  const versionPattern = /^\d+\.\d+(\.\d+)?$/;
+  if (!versionPattern.test(currentVersion) || !versionPattern.test(minimumVersion)) {
+    return res.status(400).json({ message: 'Use a version like 1.0.18.' });
+  }
+  if (!storeUrl) {
+    return res.status(400).json({ message: 'Store link is required.' });
+  }
+  if (AppVersion.compareVersions(minimumVersion, currentVersion) > 0) {
+    return res.status(400).json({ message: 'Minimum version cannot be newer than the current version.' });
+  }
+
+  const config = await AppVersion.findOneAndUpdate(
+    { platform },
+    {
+      platform,
+      currentVersion,
+      minimumVersion,
+      storeUrl,
+      releaseNotes: String(req.body?.releaseNotes || ''),
+      isMaintenanceMode: req.body?.isMaintenanceMode === true,
+      maintenanceMessage: String(req.body?.maintenanceMessage || 'We are currently performing maintenance. Please try again later.'),
+      forceUpdate: req.body?.forceUpdate === true,
+    },
+    { upsert: true, new: true, runValidators: true },
+  );
+
+  res.json({ version: publicVersion(config) });
 }));
 
 export default router;

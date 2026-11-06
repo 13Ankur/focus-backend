@@ -12,6 +12,7 @@ const purchaseRows = document.querySelector('#purchase-rows');
 const detail = document.querySelector('#detail');
 const usersPanel = document.querySelector('#users-panel');
 const purchasesPanel = document.querySelector('#purchases-panel');
+const versionsPanel = document.querySelector('#versions-panel');
 
 const state = {
   usersPage: 1,
@@ -224,6 +225,29 @@ function escapeHtml(value) {
   }[char]));
 }
 
+function versionCard(version) {
+  const platform = version?.platform || '';
+  return `<form class="version-card" data-platform="${escapeHtml(platform)}">
+    <h2>${escapeHtml(platform)}</h2>
+    <label>Current version<input name="currentVersion" value="${escapeHtml(version.currentVersion || '')}" required /></label>
+    <label>Minimum version<input name="minimumVersion" value="${escapeHtml(version.minimumVersion || '')}" required /></label>
+    <label>Store link<input name="storeUrl" value="${escapeHtml(version.storeUrl || '')}" required /></label>
+    <label>Release notes<textarea name="releaseNotes" rows="3">${escapeHtml(version.releaseNotes || '')}</textarea></label>
+    <label>Maintenance message<input name="maintenanceMessage" value="${escapeHtml(version.maintenanceMessage || '')}" /></label>
+    <label class="check"><input name="forceUpdate" type="checkbox" ${version.forceUpdate ? 'checked' : ''} /> Force update when below current</label>
+    <label class="check"><input name="isMaintenanceMode" type="checkbox" ${version.isMaintenanceMode ? 'checked' : ''} /> Maintenance mode</label>
+    <p class="muted">Last saved ${when(version.updatedAt)}</p>
+    <p class="version-message muted"></p>
+    <button type="submit">Save ${escapeHtml(platform)}</button>
+  </form>`;
+}
+
+async function loadVersions() {
+  const data = await api('/versions');
+  const byPlatform = Object.fromEntries((data.versions || []).map((version) => [version.platform, version]));
+  versionsPanel.innerHTML = ['android', 'ios'].map((platform) => versionCard(byPlatform[platform] || { platform })).join('');
+}
+
 function showTab(name) {
   state.tab = name;
   document.querySelectorAll('.tab').forEach((tab) => {
@@ -232,6 +256,10 @@ function showTab(name) {
   detail.hidden = true;
   usersPanel.hidden = name !== 'users';
   purchasesPanel.hidden = name !== 'purchases';
+  versionsPanel.hidden = name !== 'versions';
+  if (name === 'versions') loadVersions().catch((error) => {
+    versionsPanel.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+  });
 }
 
 loginForm.addEventListener('submit', async (event) => {
@@ -308,6 +336,30 @@ purchaseRows.addEventListener('click', (event) => {
   const row = event.target.closest('tr[data-user]');
   if (row?.dataset.user) openUser(row.dataset.user);
 });
+versionsPanel.addEventListener('submit', async (event) => {
+  const form = event.target.closest('form[data-platform]');
+  if (!form) return;
+  event.preventDefault();
+  const message = form.querySelector('.version-message');
+  const body = {
+    currentVersion: String(new FormData(form).get('currentVersion') || '').trim(),
+    minimumVersion: String(new FormData(form).get('minimumVersion') || '').trim(),
+    storeUrl: String(new FormData(form).get('storeUrl') || '').trim(),
+    releaseNotes: String(new FormData(form).get('releaseNotes') || ''),
+    maintenanceMessage: String(new FormData(form).get('maintenanceMessage') || ''),
+    forceUpdate: form.querySelector('[name="forceUpdate"]').checked,
+    isMaintenanceMode: form.querySelector('[name="isMaintenanceMode"]').checked,
+  };
+  try {
+    await api(`/versions/${form.dataset.platform}`, { method: 'PUT', body: JSON.stringify(body) });
+    message.className = 'version-message muted';
+    message.textContent = 'Saved. Installed apps will see this on their next open.';
+  } catch (error) {
+    message.className = 'version-message error';
+    message.textContent = error.message;
+  }
+});
+
 document.querySelector('#detail-back').onclick = () => {
   detail.hidden = true;
   showTab(state.tab);
