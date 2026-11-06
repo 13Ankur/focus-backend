@@ -24,6 +24,7 @@ const FEATURE_TIERS = {
  */
 export function getEffectiveTier(user) {
   if (!user) return 'free';
+  if (user.adminProLock === 'revoked') return 'free';
 
   const now = new Date();
 

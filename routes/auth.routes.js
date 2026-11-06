@@ -411,6 +411,11 @@ router.post('/login', authLimiter, async (req, res) => {
       });
     }
 
+    await User.updateOne(
+      { _id: user._id },
+      { $inc: { loginCount: 1 }, $set: { lastLoginAt: new Date() } },
+    );
+
     const alreadyUsingApp = (user.totalFocusMinutes || 0) > 0
       || (user.completedSessions || 0) > 0
       || (Array.isArray(user.focusTags) && user.focusTags.length > 0);

@@ -24,6 +24,7 @@ import versionRoutes from './routes/version.routes.js';
 import subscriptionRoutes from './routes/subscription.js';
 import achievementRoutes from './routes/achievement.routes.js';
 import socialRoutes from './routes/social.js';
+import adminRoutes from './routes/admin.routes.js';
 import { startSubscriptionCron } from './services/subscriptionCron.js';
 import { log } from './utils/logger.js';
 
@@ -204,6 +205,9 @@ app.use((req, res, next) => {
   if (req.path === '/health' || req.path === '/subscription/webhook') {
     return next();
   }
+  if (req.method === 'GET' && req.path.startsWith('/admin') && !req.path.startsWith('/admin/api')) {
+    return next();
+  }
   if (!isDBConnected()) {
     connectDB(); // Trigger background reconnect attempt if needed
     const dbStatus = getDBStatus();
@@ -232,6 +236,9 @@ app.use('/subscription/razorpay/webhook', webhookLimiter);
 app.use('/subscription', subscriptionRoutes);
 app.use('/achievements', achievementRoutes);
 app.use('/social', socialRoutes);
+app.use('/admin/api/login', authLimiter);
+app.use('/admin/api', adminRoutes);
+app.use('/admin', express.static(path.join(__dirname, 'public', 'admin')));
 
 // ════════════════════════════════════════════════════════════════════
 //  AdMob app-ads.txt

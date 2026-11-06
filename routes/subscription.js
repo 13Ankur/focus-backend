@@ -205,6 +205,11 @@ async function handleInitialPurchase(user, event) {
     ? new Date(event.expiration_at_ms)
     : null;
   const platform = detectPlatform(event);
+  if (user.adminProLock === 'revoked') {
+    console.log(`Subscription skipped: admin revoked user=${user._id}`);
+    return;
+  }
+
   const alreadyPro = isEffectivePro(user);
 
   user.subscriptionTier = tier;
@@ -226,6 +231,10 @@ async function handleInitialPurchase(user, event) {
 }
 
 async function handleRenewal(user, event) {
+  if (user.adminProLock === 'revoked') {
+    console.log(`Renewal skipped: admin revoked user=${user._id}`);
+    return;
+  }
   const alreadyPro = isEffectivePro(user);
   const expiry = event.expiration_at_ms
     ? new Date(event.expiration_at_ms)
@@ -280,6 +289,10 @@ async function handleProductChange(user, event) {
 
   if (!newTier) {
     console.warn(`Webhook PRODUCT_CHANGE: unknown new product_id="${newProductId}"`);
+    return;
+  }
+  if (user.adminProLock === 'revoked') {
+    console.log(`Product change skipped: admin revoked user=${user._id}`);
     return;
   }
 
@@ -540,6 +553,12 @@ router.post('/verify-razorpay', protect, async (req, res) => {
       userId: String(req.user?._id || ''),
       message: err.message,
     });
+    if (err.message === 'pro_revoked') {
+      return res.status(409).json({
+        error: 'pro_revoked',
+        message: 'Pro was revoked for this account. An admin has to grant it again.',
+      });
+    }
     if (err.message.includes('not configured')) {
       return res.status(503).json({
         error: 'razorpay_not_configured',
@@ -616,6 +635,12 @@ router.post('/razorpay/recover', protect, async (req, res) => {
       userId: String(req.user?._id || ''),
       message: err.message,
     });
+    if (err.message === 'pro_revoked') {
+      return res.status(409).json({
+        error: 'pro_revoked',
+        message: 'Pro was revoked for this account. An admin has to grant it again.',
+      });
+    }
     res.status(500).json({ message: 'Could not restore the subscription' });
   }
 });
@@ -671,7 +696,9 @@ router.post('/razorpay/webhook', async (req, res) => {
       ? new Date(subscription.current_end * 1000)
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-    if (event === 'subscription.charged' || event === 'subscription.activated') {
+    if (user.adminProLock === 'revoked' && (event === 'subscription.charged' || event === 'subscription.activated')) {
+      console.log(`Razorpay ${event}: skipped, admin revoked user=${user._id}`);
+    } else if (event === 'subscription.charged' || event === 'subscription.activated') {
       const alreadyPro = isEffectivePro(user);
       user.subscriptionTier = 'pro';
       user.subscriptionExpiry = periodEnd;
@@ -736,6 +763,10 @@ async function grantRazorpayAccess(userId, {
   amount = 0,
 }) {
   const existing = await User.findById(userId);
+  if (existing?.adminProLock === 'revoked') {
+    const err = new Error('pro_revoked');
+    throw err;
+  }
   const alreadyPro = isEffectivePro(existing);
   const user = await activateSubscription(userId, tier, platform, expiry);
   user.subscriptionCancelled = false;

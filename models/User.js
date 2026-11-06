@@ -243,6 +243,19 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    loginCount: {
+      type: Number,
+      default: 0,
+    },
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+    // 'revoked' blocks store renewals from turning Pro back on.
+    adminProLock: {
+      type: String,
+      default: null,
+    },
 
     // ============ PREFERENCES ============
     settings: {

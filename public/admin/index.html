@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>StayPaws Admin</title>
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+  <main id="login" class="login">
+    <form id="login-form" class="card login-card">
+      <p class="brand">StayPaws</p>
+      <h1>Admin</h1>
+      <p class="muted">Accounts, logins, and purchases.</p>
+      <label>Email<input type="email" name="email" autocomplete="username" required /></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password" required /></label>
+      <p id="login-error" class="error" hidden></p>
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+
+  <div id="app" hidden>
+    <header class="top">
+      <div>
+        <p class="brand">StayPaws</p>
+        <h1>Admin</h1>
+      </div>
+      <button id="logout" type="button" class="ghost">Sign out</button>
+    </header>
+
+    <section id="stats" class="stats"></section>
+
+    <nav class="tabs">
+      <button type="button" class="tab active" data-tab="users">Users</button>
+      <button type="button" class="tab" data-tab="purchases">Purchases</button>
+    </nav>
+
+    <section id="users-panel">
+      <form id="user-search" class="toolbar">
+        <input name="q" type="search" placeholder="Search name, email, or id" />
+        <select name="tier">
+          <option value="all">All accounts</option>
+          <option value="pro">Pro</option>
+          <option value="free">Free</option>
+        </select>
+        <button type="submit">Search</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Plan</th>
+              <th>Logins</th>
+              <th>Last login</th>
+              <th>Focus</th>
+              <th>Joined</th>
+            </tr>
+          </thead>
+          <tbody id="user-rows"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" id="users-prev" class="ghost">Previous</button>
+        <span id="users-page"></span>
+        <button type="button" id="users-next" class="ghost">Next</button>
+      </div>
+    </section>
+
+    <section id="purchases-panel" hidden>
+      <form id="purchase-search" class="toolbar">
+        <input name="q" type="search" placeholder="Search user, product, or payment id" />
+        <button type="submit">Search</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>User</th>
+              <th>Source</th>
+              <th>Product</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="purchase-rows"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button type="button" id="purchases-prev" class="ghost">Previous</button>
+        <span id="purchases-page"></span>
+        <button type="button" id="purchases-next" class="ghost">Next</button>
+      </div>
+    </section>
+
+    <section id="detail" class="detail" hidden>
+      <button type="button" id="detail-back" class="ghost">Back to list</button>
+      <div id="detail-body"></div>
+    </section>
+  </div>
+  <script src="admin.js"></script>
+</body>
+</html>
